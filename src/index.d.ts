@@ -53,7 +53,7 @@ interface IstanbulReport {
     [filePath: string]: FileCoverageData;
 }
 
-interface CovPatch {
+interface Coverage {
     /**
      * Instrument all modules in the specified include/exclude sets with coverage tracking.
      *
@@ -64,16 +64,16 @@ interface CovPatch {
      *
      * @example
      * ```ts
-     * const covpatch = require(ReplicatedStorage.covpatch);
+     * const coverage = require(ReplicatedStorage.coverage);
      *
      * // Instrument everything with defaults
-     * covpatch.instrument();
+     * coverage.instrument();
      *
      * // Instrument only specific folders
-     * covpatch.instrument([ServerScriptService.MyProject], []);
+     * coverage.instrument([ServerScriptService.MyProject], []);
      *
      * // Exclude test files
-     * covpatch.instrument(
+     * coverage.instrument(
      *   [ServerScriptService],
      *   [ServerScriptService.Tests]
      * );
@@ -87,13 +87,13 @@ interface CovPatch {
      *
      * @example
      * ```ts
-     * const covpatch = require(ReplicatedStorage.covpatch);
+     * const coverage = require(ReplicatedStorage.coverage);
      *
      * // After generating coverage report
-     * local report = covpatch.istanbul();
+     * local report = coverage.istanbul();
      *
      * // Cleanup instrumentation data
-     * covpatch.cleanup();
+     * coverage.cleanup();
      * ```
      */
     cleanup(): void;
@@ -107,12 +107,12 @@ interface CovPatch {
      * @example
      * ```ts
      * const HttpService = game.GetService("HttpService");
-     * const covpatch = require(ReplicatedStorage.covpatch);
+     * const coverage = require(ReplicatedStorage.coverage);
      *
      * // Run your tests...
      *
      * // Generate and export coverage report
-     * const report = covpatch.istanbul();
+     * const report = coverage.istanbul();
      * const json = HttpService.JSONEncode(report);
      * // Write json to file or send to external service
      * ```
@@ -120,5 +120,5 @@ interface CovPatch {
     istanbul(): IstanbulReport;
 }
 
-declare const covpatch: CovPatch;
-export = covpatch;
+declare const coverage: Coverage;
+export = coverage;

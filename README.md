@@ -1,4 +1,4 @@
-# Roblox Coverage Patch
+# Roblox Coverage
 
 Code coverage instrumentation for Roblox Luau modules. This library injects lightweight probes into your ModuleScripts at runtime, collects execution hits, and emits an Istanbul-compatible JSON report that you can feed into standard coverage tooling (HTML, lcov, Cobertura, etc.).
 
@@ -6,13 +6,13 @@ Code coverage instrumentation for Roblox Luau modules. This library injects ligh
 - Runtime instrumentation of ModuleScripts (no compiler plugin required)
 - Istanbul/nyc-compatible JSON output
 - Function and branch hit tracking in addition to statements
-- Sensible include/exclude defaults (avoids `Packages` and the covpatch folder)
+- Sensible include/exclude defaults (avoids `Packages` and the coverage folder)
 - Demo place + script to generate full HTML/text/LCOV/Cobertura reports locally
 
 ## How it works
-1. `covpatch.instrument()` walks your include roots, injects `_G.__covhit`, `_G.__covfn`, and `_G.__covbranch` calls into ModuleScript sources, and tracks IDs per line/function/branch.
+1. `coverage.instrument()` walks your include roots, injects `_G.__covhit`, `_G.__covfn`, and `_G.__covbranch` calls into ModuleScript sources, and tracks IDs per line/function/branch.
 2. Your code runs normally; probes increment counters in `_G.__COVERAGE__`.
-3. `covpatch.istanbul()` converts the collected data to an Istanbul report object you can serialize and post-process with `istanbul-lib-*` or CI tools.
+3. `coverage.istanbul()` converts the collected data to an Istanbul report object you can serialize and post-process with `istanbul-lib-*` or CI tools.
 
 ## Quick start (demo)
 Prereqs: Node.js, Roblox Studio
@@ -33,14 +33,11 @@ The demo will:
 Open `demo/coverage/index.html` in a browser to explore the report.
 
 ## Using in your experience
-1. Put the covpatch ModuleScript (exported by your build) in `ReplicatedStorage.covpatch`.
-2. At runtime, instrument your code:
-
 ```lua
-local covpatch = require(game:GetService("ReplicatedStorage").covpatch)
+local coverage = require(game:GetService("ReplicatedStorage").coverage)
 
 -- Instrument common services by default; you can pass explicit roots.
-covpatch.instrument(
+coverage.instrument(
     {
         game:GetService("ServerScriptService"),
         game:GetService("ReplicatedStorage"),
@@ -54,12 +51,12 @@ covpatch.instrument(
 )
 ```
 
-3. Run your tests or gameplay to collect coverage.
-4. Export the report where you need it (e.g. to HttpService, DataStore, or a file if running in a CLI environment):
+1. Run your tests or gameplay to collect coverage.
+2. Export the report where you need it (e.g. to HttpService, DataStore, or a file if running in a CLI environment):
 
 ```lua
 local HttpService = game:GetService("HttpService")
-local report = covpatch.istanbul()
+local report = coverage.istanbul()
 local json = HttpService:JSONEncode(report)
 -- Persist json as needed
 ```

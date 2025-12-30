@@ -31,7 +31,7 @@ async function main() {
     }
 
     const output = fs.readFileSync(tempOutPath, "utf-8");
-    const json = JSON.parse(output.split("__COVPATCH__")[1]);
+    const json = JSON.parse(output.split("__COVERAGE__")[1]);
 
     fs.mkdirSync(path.dirname(coverageFile), { recursive: true });
     fs.writeFileSync(coverageFile, JSON.stringify(json, null, 2));

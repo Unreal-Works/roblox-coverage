@@ -1,5 +1,5 @@
 local parser = require(script.parser)
-local covpatch = {}
+local coverage = {}
 
 function getModulesInIntersection(include: { Instance }, exclude: { Instance }): { ModuleScript }
 	local includedModules = {}
@@ -33,16 +33,16 @@ function getModulesInIntersection(include: { Instance }, exclude: { Instance }):
 end
 
 -- Instrument all modules in the specified include/exclude sets
-function covpatch.instrument(include, exclude)
-	local coverage = parser.ensureCoverage()
+function coverage.instrument(include, exclude)
+	local coverageData = parser.ensureCoverage()
 
 	exclude = exclude or {
         game:GetService("ReplicatedStorage"):FindFirstChild("Packages")
     }
 	
 	-- Always exclude the coverage patch folder itself
-	local covpatchFolder = game:GetService("ReplicatedStorage"):FindFirstChild("covpatch")
-	if covpatchFolder then
+	local coverageFolder = game:GetService("ReplicatedStorage"):FindFirstChild("coverage")
+	if coverageFolder then
 		table.insert(exclude, script)
 	end
 
@@ -55,17 +55,17 @@ function covpatch.instrument(include, exclude)
 	}, exclude)
 
 	for _, module in ipairs(modules) do
-		parser.instrumentModule(module, game, coverage)
+		parser.instrumentModule(module, game, coverageData)
 	end
 end
 
 -- Generate Istanbul-compatible coverage report
-function covpatch.istanbul()
-	local coverage = parser.ensureCoverage()
+function coverage.istanbul()
+	local coverageData = parser.ensureCoverage()
 	local report = {}
 	
 	-- Process statements
-	for id, location in pairs(coverage.map) do
+	for id, location in pairs(coverageData.map) do
 		local file = location.file
 		if not report[file] then
 			report[file] = {
@@ -78,7 +78,7 @@ function covpatch.istanbul()
 				b = {}
 			}
 		end
-		local hits = coverage.hits[id] or 0
+		local hits = coverageData.hits[id] or 0
 		report[file].statementMap[tostring(id)] = {
 			start = { line = location.line, column = 0 },
 			["end"] = { line = location.line, column = 0 }
@@ -87,7 +87,7 @@ function covpatch.istanbul()
 	end
 	
 	-- Process functions
-	for fnId, fnData in pairs(coverage.fnMap) do
+	for fnId, fnData in pairs(coverageData.fnMap) do
 		local file = fnData.file
 		if file then
 			if not report[file] then
@@ -102,7 +102,7 @@ function covpatch.istanbul()
 				}
 			end
 			
-			local hits = coverage.f[fnId] or 0
+			local hits = coverageData.f[fnId] or 0
 			report[file].fnMap[tostring(fnId)] = {
 				name = fnData.name,
 				decl = {
@@ -117,7 +117,7 @@ function covpatch.istanbul()
 	end
 	
 	-- Process branches
-	for branchId, branchData in pairs(coverage.branchMap) do
+	for branchId, branchData in pairs(coverageData.branchMap) do
 		local file = branchData.file
 		if file and branchData.locations and #branchData.locations > 0 then
 			if not report[file] then
@@ -150,7 +150,7 @@ function covpatch.istanbul()
 				}
 				
 				-- Get hit counts for each path
-				local branchHits = coverage.b[branchId] or {}
+				local branchHits = coverageData.b[branchId] or {}
 				local hitArray = {}
 				for i = 1, #locations do
 					table.insert(hitArray, branchHits[i - 1] or 0)
@@ -164,10 +164,10 @@ function covpatch.istanbul()
 end
 
 -- Revert all instrumented modules back to their original state
-function covpatch.cleanup()
-	local coverage = parser.ensureCoverage()
+function coverage.cleanup()
+	local coverageData = parser.ensureCoverage()
 	
-	for _, moduleInfo in ipairs(coverage.originals) do
+	for _, moduleInfo in ipairs(coverageData.originals) do
 		if moduleInfo.wasReplaced then
 			-- Module was replaced with a patched version
 			-- Destroy the patched module and restore the original name
@@ -195,7 +195,7 @@ function covpatch.cleanup()
 	end
 	
 	-- Clear the originals tracking
-	coverage.originals = {}
+	coverageData.originals = {}
 end
 
-return covpatch
+return coverage

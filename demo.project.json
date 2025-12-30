@@ -4,7 +4,7 @@
         "$className": "DataModel",
 
         "ReplicatedStorage": {
-            "covpatch": {
+            "coverage": {
                 "$path": "src"
             },
             "src": {

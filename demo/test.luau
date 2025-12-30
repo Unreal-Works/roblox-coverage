@@ -1,7 +1,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local covpatch = require(ReplicatedStorage.covpatch)
+local coverage = require(ReplicatedStorage.coverage)
 
-covpatch.instrument()
+coverage.instrument()
 
 local src = ReplicatedStorage:WaitForChild("src")
 local MathUtils = require(src.MathUtils)
@@ -114,5 +114,5 @@ print("Reduced sum:", sum)
 local success, value = Advanced.safeCall(function() return "safe" end)
 print("Safe call success:", success, "value:", value)
 
-print("__COVPATCH__")
-return covpatch.istanbul()
+print("__COVERAGE__")
+return coverage.istanbul()
