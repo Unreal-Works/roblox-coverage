@@ -12,9 +12,15 @@ function getModulesInIntersection(include: { Instance }, exclude: { Instance }):
 	end
 
 	for _, excludeRoot in ipairs(exclude) do
-		for _, module in ipairs(excludeRoot:GetDescendants()) do
-			if module:IsA("ModuleScript") then
-				includedModules[module] = nil
+		if excludeRoot then
+			for _, module in ipairs(excludeRoot:GetDescendants()) do
+				if module:IsA("ModuleScript") then
+					includedModules[module] = nil
+				end
+			end
+			-- Also exclude the root itself if it's a ModuleScript
+			if excludeRoot:IsA("ModuleScript") then
+				includedModules[excludeRoot] = nil
 			end
 		end
 	end
@@ -30,15 +36,23 @@ end
 function covpatch.instrument(include, exclude)
 	local coverage = parser.ensureCoverage()
 
+	exclude = exclude or {
+        game:GetService("ReplicatedStorage"):FindFirstChild("Packages")
+    }
+	
+	-- Always exclude the coverage patch folder itself
+	local covpatchFolder = game:GetService("ReplicatedStorage"):FindFirstChild("covpatch")
+	if covpatchFolder then
+		table.insert(exclude, script)
+	end
+
 	local modules = getModulesInIntersection(include or {
 		game:GetService("ServerScriptService"),
 		game:GetService("ReplicatedStorage"),
 		game:GetService("ServerStorage"),
 		game:GetService("StarterPlayer"),
 		game:GetService("StarterGui"),
-	}, exclude or {
-		game:GetService("ReplicatedStorage"):FindFirstChild("Packages"),
-	})
+	}, exclude)
 
 	for _, module in ipairs(modules) do
 		parser.instrumentModule(module, game, coverage)
