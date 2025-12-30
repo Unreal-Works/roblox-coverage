@@ -565,6 +565,51 @@ addTest("ensureCoverage coverage functions exist", function()
 	assertEqual(type(_G.__covfn), "function")
 	assertEqual(type(_G.__covbranch), "function")
 end)
+addTest("instrumentSource with function literal in method call", function()
+	local coverage = parser.ensureCoverage()
+	local source = [[self
+		:finally(function()
+			task.spawn(thread)
+		end)
+		:catch(
+			function() end
+		)]]
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	-- Should not have instrumentation that breaks function() end syntax
+	-- e.g., "function() _G.__covhit" is broken, "function() end" is correct
+	assertEqual(instrumented:find("function() _G.__covhit") == nil, true)
+	assertEqual(instrumented:find("function() _G.__covfn") == nil, true)
+	-- The code should still contain the original function definitions
+	assert(instrumented:find("function()") ~= nil)
+end)
 
+addTest("instrumentSource with literal in function call arguments", function()
+	local coverage = parser.ensureCoverage()
+	local source = [[bindEach(
+		describe :: FIXME_ANALYZE,
+		false
+	)]]
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	-- Should not have instrumentation breaking the false parameter
+	assert(instrumented:find("_G.__covhit.*;%s*false") == nil)
+	-- The false should remain as a parameter without prefix
+	assert(instrumented:find("false") ~= nil)
+end)
+
+addTest("instrumentSource with multi-line function signature", function()
+	local coverage = parser.ensureCoverage()
+	local source = [[function _dispatchDescribe(
+		blockFn: BlockFn,
+		blockName: BlockNameLike,
+		mode: any?
+	): ()
+		return nil
+	end]]
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	-- Should not have instrumentation breaking the closing ) on the signature line
+	assert(instrumented:find("_G.__covfn.*;%s*%)") == nil)
+	-- Should only have instrumentation in the actual function body
+	assert(instrumented:find("return nil") ~= nil)
+end)
 -- Run the tests
 runTests()
