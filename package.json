@@ -8,6 +8,13 @@
         "build:demo": "npx rojo build demo.project.json -o demo/place.rbxl",
         "demo": "npm run build:demo --silent && node demo/runTest.cjs"
     },
+    "publishConfig": {
+        "access": "public"
+    },
+    "repository": {
+        "url": "https://github.com/Unreal-Works/roblox-coverage-patch.git",
+        "type": "git"
+    },
     "license": "MIT",
     "devDependencies": {
         "@rbxts/compiler-types": "^3.0.0-types.0",
