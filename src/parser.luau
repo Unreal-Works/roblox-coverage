@@ -569,6 +569,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                             j += 1
                             -- Skip the return type tokens until we find something that's not part of the type
                             local returnParenDepth = 0
+                            local returnAngleDepth = 0
                             while j <= #tokens do
                                 local rt = tokens[j]
                                 local prev = tokens[j-1]
@@ -576,7 +577,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                                 -- If we hit a new line at depth 0, check if we should stop.
                                 -- We only continue across newlines if either the previous token
                                 -- or current token is a symbol that typically continues a type.
-                                if returnParenDepth == 0 and rt.line > prev.line then
+                                if returnParenDepth == 0 and returnAngleDepth == 0 and rt.line > prev.line then
                                     local rtIsCont = (rt.kind == "symbol" and (rt.value == "|" or rt.value == "&" or rt.value == "," or rt.value == "." or rt.value == ":" or rt.value == "->" or rt.value == "{" or rt.value == "[" or rt.value == "(" or rt.value == "<" or rt.value == "?"))
                                     local prevIsCont = (prev.kind == "symbol" and (prev.value == "|" or prev.value == "&" or prev.value == "," or prev.value == "." or prev.value == ":" or prev.value == "->" or prev.value == "{" or prev.value == "[" or prev.value == "(" or prev.value == "<"))
                                     if not rtIsCont and not prevIsCont then
@@ -595,15 +596,23 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                                         returnParenDepth -= 1
                                         j += 1
                                     end
+                                elseif rt.kind == "symbol" and rt.value == "<" then
+                                    returnAngleDepth += 1
+                                    j += 1
+                                elseif rt.kind == "symbol" and rt.value == ">" then
+                                    if returnAngleDepth > 0 then
+                                        returnAngleDepth -= 1
+                                    end
+                                    j += 1
                                 elseif rt.kind == "symbol" and rt.value == "->" then
                                     j += 1
-                                elseif rt.kind == "symbol" and (rt.value == "." or rt.value == ":" or rt.value == "?" or rt.value == "|" or rt.value == "&" or rt.value == "{" or rt.value == "}" or rt.value == "[" or rt.value == "]" or rt.value == "," or rt.value == "<" or rt.value == ">") then
+                                elseif rt.kind == "symbol" and (rt.value == "." or rt.value == ":" or rt.value == "?" or rt.value == "|" or rt.value == "&" or rt.value == "{" or rt.value == "}" or rt.value == "[" or rt.value == "]" or rt.value == ",") then
                                     j += 1
                                 elseif rt.kind == "identifier" then
                                     j += 1
                                 else
-                                    -- Stop skipping type if we're not in parens
-                                    if returnParenDepth == 0 then
+                                    -- Stop skipping type if we're not in parens or angle brackets
+                                    if returnParenDepth == 0 and returnAngleDepth == 0 then
                                         break
                                     end
                                     j += 1

@@ -911,6 +911,43 @@ end]])
     expect(added).toBe(9)
 end)
 
+addTest("regression: instrumentSource circus.combined.dispatch", function()
+    local coverage = parser.ensureCoverage()
+    local source = [[local function dispatch(event: Circus_AsyncEvent): Promise<nil>
+    return Promise.resolve():andThen(function()
+        for _, handler in ipairs(eventHandlers) do
+            -- ROBLOX deviation START: need to check if value returned is a Promise, otherwise we can't run `:expect()`
+            -- ROBLOX FIXME Luau: need to cast handler explicitely as Luau can't infer from type union properly
+            local result = (
+                handler :: (self: any, event: Circus_AsyncEvent, state: Circus_State) -> nil | Promise<nil>
+            )(nil, event, getState())
+            if result ~= nil then
+                result:expect()
+            end
+            -- ROBLOX deviation END
+        end
+    end)
+end]]
+    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+    expect(instrumented).toBe([[local function dispatch(event: Circus_AsyncEvent): Promise<nil> _G.__covfn(1);
+    _G.__covhit(1); return Promise.resolve():andThen(function() _G.__covfn(2);
+        _G.__covhit(2); for _, handler in ipairs(eventHandlers) do
+            -- ROBLOX deviation START: need to check if value returned is a Promise, otherwise we can't run `:expect()`
+            -- ROBLOX FIXME Luau: need to cast handler explicitely as Luau can't infer from type union properly
+            _G.__covhit(3); local result = (
+                handler :: (self: any, event: Circus_AsyncEvent, state: Circus_State) -> nil | Promise<nil>
+            )(nil, event, getState())
+            if result ~= nil then
+                _G.__covbranch(1, 0); _G.__covhit(4); result:expect()
+            end
+            -- ROBLOX deviation END
+        end
+    end)
+end]])
+    expect(added).toBe(7)
+end)
+
+
 
 
 -- Run the tests
