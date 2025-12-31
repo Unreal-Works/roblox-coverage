@@ -374,7 +374,7 @@ local function replaceTernaryExpression(lines: {string}, startLine: number, endL
     local afterTernary = text:sub(elseExprEnd + 1)
     
     -- Function to instrument internal expressions without recursion
-    local function instrumentInternal(partText: string, partStartLine: number)
+    local function instrumentInternal(partText: string, partStartLine: number, colOffset: number?)
         local partLines = {}
         local current = partText
         local startIdx = 1
@@ -393,104 +393,85 @@ local function replaceTernaryExpression(lines: {string}, startLine: number, endL
             local token = firstTokens[currentLineNo]
             local trimmed = lineText:match("^%s*(.-)%s*$") or ""
             local indent = lineText:match("^(%s*)") or ""
+            local currentColOffset = (i == 1 and colOffset or 0)
             
-            if (currentLineNo ~= startLine) then
-                if functionDeclarationLines[currentLineNo] then
-                    local decls = functionDeclarationLines[currentLineNo]
-                    local lineInsertions = {}
-                    for _, decl in ipairs(decls) do
-                        local t = tokens[decl.tokenIdx]
-                        -- We need the column relative to the start of this partText line
-                        -- Actually, for instrumentInternal, lineText is already one line.
-                        -- We can find the token on this line.
-                        local targetToken = nil
-                        local tokensOnLine = tokensByLine[currentLineNo]
-                        if tokensOnLine then
-                            for _, ti in ipairs(tokensOnLine) do
-                                if ti.index == decl.tokenIdx then
-                                    targetToken = ti.token
-                                    break
-                                end
+            local combinedLineInsertions = {}
+            if functionDeclarationLines[currentLineNo] then
+                local decls = functionDeclarationLines[currentLineNo]
+                for _, decl in ipairs(decls) do
+                    local targetToken = nil
+                    local tokensOnLine = tokensByLine[currentLineNo]
+                    if tokensOnLine then
+                        for _, ti in ipairs(tokensOnLine) do
+                            if ti.index == decl.tokenIdx then
+                                targetToken = ti.token
+                                break
                             end
                         end
+                    end
 
-                        if targetToken then
+                    if targetToken then
+                        local relCol = targetToken.column - currentColOffset
+                        if relCol >= 0 and relCol < #lineText then
                             local modStr = "_G.__covfn(" .. tostring(decl.id) .. ");"
-                            table.insert(lineInsertions, { col = targetToken.column, text = modStr })
+                            table.insert(combinedLineInsertions, { col = targetToken.column, text = modStr, priority = 1 })
                             addedCount += 1
                         end
                     end
-
-                    if #lineInsertions > 0 then
-                        table.sort(lineInsertions, function(a, b) return a.col > b.col end)
-                        local originalLine = lines[currentLineNo]
-                        local newLine = originalLine
-                        for _, ins in ipairs(lineInsertions) do
-                            local tokenOnLine = nil
-                            for _, ti in ipairs(tokensByLine[currentLineNo]) do
-                                if ti.token.column == ins.col then
-                                    tokenOnLine = ti.token
-                                    break
-                                end
-                            end
-                            if tokenOnLine then
-                                local pos = tokenOnLine.column + #tokenOnLine.value
-                                -- Adjust for indentation if we are using originalLine which has it
-                                newLine = newLine:sub(1, pos) .. " " .. ins.text .. newLine:sub(pos + 1)
-                            end
-                        end
-                        lineText = newLine
-                    end
-                    trimmed = lineText:match("^%s*(.-)%s*$") or ""
-                    indent = lineText:match("^(%s*)") or ""
                 end
-                
-                local markers = functionInstrumentedLines[currentLineNo]
-                if markers then
-                    local lineInsertions = {}
-                    for _, marker in ipairs(markers) do
-                        if marker.allocatedId then
-                            local hitStr = "_G.__covhit(" .. tostring(marker.allocatedId) .. ");"
-                            if marker.tokenIdx then
-                                table.insert(lineInsertions, { col = tokens[marker.tokenIdx].column, tokenIdx = marker.tokenIdx, text = hitStr, priority = 2 })
-                            else
-                                table.insert(modifications, hitStr)
+            end
+            
+            local markers = functionInstrumentedLines[currentLineNo]
+            if markers then
+                for _, marker in ipairs(markers) do
+                    if marker.allocatedId then
+                        local hitStr = "_G.__covhit(" .. tostring(marker.allocatedId) .. ");"
+                        if marker.tokenIdx then
+                            local t = tokens[marker.tokenIdx]
+                            local relCol = t.column - currentColOffset
+                            if relCol >= 0 and relCol < #lineText then
+                                table.insert(combinedLineInsertions, { col = t.column, text = hitStr, priority = 2 })
+                                addedCount += 1
                             end
+                        elseif currentLineNo ~= startLine then
+                            table.insert(modifications, hitStr)
                             addedCount += 1
                         end
                     end
-                    if #lineInsertions > 0 then
-                        table.sort(lineInsertions, function(a, b) 
-                            if a.col ~= b.col then return a.col > b.col end
-                            return (a.priority or 0) > (b.priority or 0)
-                        end)
-                        local originalLine = lines[currentLineNo]
-                        local newLine = originalLine
-                        for _, ins in ipairs(lineInsertions) do
-                            local tokenOnLine = nil
-                            local tokensOnLine = tokensByLine[currentLineNo]
-                            if tokensOnLine then
-                                for _, ti in ipairs(tokensOnLine) do
-                                    if ti.token.column == ins.col then
-                                        tokenOnLine = ti.token
-                                        break
-                                    end
-                                end
-                            end
-                            if tokenOnLine then
-                                local pos = tokenOnLine.column + #tokenOnLine.value
-                                newLine = newLine:sub(1, pos) .. " " .. ins.text .. newLine:sub(pos + 1)
+                end
+            end
+
+            if #combinedLineInsertions > 0 then
+                table.sort(combinedLineInsertions, function(a, b) 
+                    if a.col ~= b.col then return a.col > b.col end
+                    return (a.priority or 0) > (b.priority or 0)
+                end)
+                local newLine = lineText
+                for _, ins in ipairs(combinedLineInsertions) do
+                    local tokenOnLine = nil
+                    local tokensOnLine = tokensByLine[currentLineNo]
+                    if tokensOnLine then
+                        for _, ti in ipairs(tokensOnLine) do
+                            if ti.token.column == ins.col then
+                                tokenOnLine = ti.token
+                                break
                             end
                         end
-                        lineText = newLine
+                    end
+                    if tokenOnLine then
+                        local pos = tokenOnLine.column - currentColOffset + #tokenOnLine.value
+                        newLine = newLine:sub(1, pos) .. " " .. ins.text .. newLine:sub(pos + 1)
                     end
                 end
+                lineText = newLine
+                trimmed = lineText:match("^%s*(.-)%s*$") or ""
+                indent = lineText:match("^(%s*)") or ""
+            end
 
-                local lineHitId = lineHitIds[currentLineNo]
-                if lineHitId then
-                    table.insert(modifications, "_G.__covhit(" .. tostring(lineHitId) .. ");")
-                    addedCount += 1
-                end
+            local lineHitId = lineHitIds[currentLineNo]
+            if lineHitId and (currentLineNo ~= startLine) then
+                table.insert(modifications, "_G.__covhit(" .. tostring(lineHitId) .. ");")
+                addedCount += 1
             end
             
             if #modifications > 0 then
@@ -503,19 +484,19 @@ local function replaceTernaryExpression(lines: {string}, startLine: number, endL
     end
 
     -- Helper to trim but keep track of shared coverage
-    local function instrumentPart(part: string, partStartLine: number)
-        local trimmed = part:match("^%s*(.-)%s*$") or ""
+    local function instrumentPart(part: string, partStartLine: number, partStartCol: number)
         local prefix = part:match("^(%s*)") or ""
         local suffix = part:match("(%s*)$") or ""
-        local instrumented, added = instrumentInternal(trimmed, partStartLine)
+        local trimmed = part:sub(#prefix + 1, #part - #suffix)
+        local instrumented, added = instrumentInternal(trimmed, partStartLine, partStartCol + #prefix)
         return instrumented, prefix, suffix, added
     end
 
     local _, thenLinesOffset = text:sub(1, thenMatchEnd):gsub("\n", "\n")
     local _, elseLinesOffset = text:sub(1, elseMatchEnd):gsub("\n", "\n")
     
-    local instrumentedThen, prefixThen, suffixThen, thenAdded = instrumentPart(thenToElse, startLine + thenLinesOffset)
-    local instrumentedElse, prefixElse, suffixElse, elseAdded = instrumentPart(elseToEnd, startLine + elseLinesOffset)
+    local instrumentedThen, prefixThen, suffixThen, thenAdded = instrumentPart(thenToElse, startLine + thenLinesOffset, tokens[branchData.thenTokenIdx].column + #tokens[branchData.thenTokenIdx].value)
+    local instrumentedElse, prefixElse, suffixElse, elseAdded = instrumentPart(elseToEnd, startLine + elseLinesOffset, tokens[branchData.elseIdx].column + #tokens[branchData.elseIdx].value)
     
     -- Build the instrumented version by wrapping the results
     local instrumented = string.format("%s%s%s_G.__covbranch(%d, 0)(%s)%s%s%s_G.__covbranch(%d, 1)(%s)%s",
@@ -590,6 +571,19 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                             local returnParenDepth = 0
                             while j <= #tokens do
                                 local rt = tokens[j]
+                                local prev = tokens[j-1]
+
+                                -- If we hit a new line at depth 0, check if we should stop.
+                                -- We only continue across newlines if either the previous token
+                                -- or current token is a symbol that typically continues a type.
+                                if returnParenDepth == 0 and rt.line > prev.line then
+                                    local rtIsCont = (rt.kind == "symbol" and (rt.value == "|" or rt.value == "&" or rt.value == "," or rt.value == "." or rt.value == ":" or rt.value == "->" or rt.value == "{" or rt.value == "[" or rt.value == "(" or rt.value == "<" or rt.value == "?"))
+                                    local prevIsCont = (prev.kind == "symbol" and (prev.value == "|" or prev.value == "&" or prev.value == "," or prev.value == "." or prev.value == ":" or prev.value == "->" or prev.value == "{" or prev.value == "[" or prev.value == "(" or prev.value == "<"))
+                                    if not rtIsCont and not prevIsCont then
+                                        break
+                                    end
+                                end
+
                                 if rt.kind == "symbol" and rt.value == "(" then
                                     returnParenDepth += 1
                                     j += 1
@@ -704,6 +698,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
             end
         end
     end
+    for l, decls in pairs(functionDeclarationLines) do end
     
     -- Second pass: detect if/elseif/else branches and mark condition lines
     local i = 1
@@ -726,15 +721,29 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                 end
             end
             
-            if thenIdx then
-                -- Mark all lines between 'if' and 'then' as being in a condition
-                local ifLine = token.line
-                local thenLine = tokens[thenIdx].line
-                if ifLine ~= thenLine then
-                    for lineNum = ifLine, thenLine do
-                        linesInCondition[lineNum] = true
+                -- Detect if this is an if expression based on context
+                local firstOnLine = firstTokens[token.line]
+                local isTernary = (firstOnLine ~= token)
+                if not isTernary and i > 1 then
+                    local prev = tokens[i - 1]
+                    if prev.kind == "symbol" and (prev.value == "(" or prev.value == "{" or prev.value == "[" or prev.value == ",") then
+                        isTernary = true
                     end
                 end
+
+                if thenIdx then
+                    -- Mark all lines between 'if' and 'then' as being in a condition
+                    local ifLine = token.line
+                    local thenLine = tokens[thenIdx].line
+                    if ifLine ~= thenLine then
+                        local startMarkLine = ifLine
+                        if isTernary then
+                            startMarkLine = ifLine + 1
+                        end
+                        for lineNum = startMarkLine, thenLine do
+                            linesInCondition[lineNum] = true
+                        end
+                    end
                 
                 -- First branch starts after 'then', but skip lines containing 'then'
                 local firstBranchLine = nil
@@ -760,16 +769,6 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                 local j = thenIdx + 1
                 local foundElse = false
                 
-                -- Detect if this is an if expression based on context
-                local firstOnLine = firstTokens[token.line]
-                local isTernary = (firstOnLine ~= token)
-                if not isTernary and i > 1 then
-                    local prev = tokens[i - 1]
-                    if prev.kind == "symbol" and (prev.value == "(" or prev.value == "{" or prev.value == "[" or prev.value == ",") then
-                        isTernary = true
-                    end
-                end
-                
                 local elseIdx = nil
                 local endTokenIdx = nil
                 while j <= #tokens and depth > 0 do
@@ -782,7 +781,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                             endTokenIdx = j - 1
                             depth = 0
                             break
-                        elseif t.kind == "keyword" and (t.value == "local" or t.value == "return" or t.value == "end" or t.value == "function" or t.value == "if" or t.value == "do" or t.value == "for" or t.value == "while" or t.value == "repeat" or t.value == "until" or t.value == "break" or t.value == "continue" or t.value == "elseif") then
+                        elseif t.kind == "keyword" and (t.value == "local" or t.value == "return" or t.value == "end" or t.value == "if" or t.value == "do" or t.value == "for" or t.value == "while" or t.value == "repeat" or t.value == "until" or t.value == "break" or t.value == "continue" or t.value == "elseif") then
                             endTokenIdx = j - 1
                             depth = 0
                             break
@@ -996,6 +995,28 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 
         -- Add function declaration instrumentation if needed handled in assembly logic below
 
+        local modifications = {}
+        local lineInsertions = {}
+        if functionDeclarationLines[lineNo] then
+            for _, decl in ipairs(functionDeclarationLines[lineNo]) do
+                table.insert(lineInsertions, { col = tokens[decl.tokenIdx].column, tokenIdx = decl.tokenIdx, text = "_G.__covfn(" .. tostring(decl.id) .. ");", priority = 1 })
+                fnAdded += 1
+            end
+        end
+        if bodyHitMarkers then
+            for _, marker in ipairs(bodyHitMarkers) do
+                if marker.allocatedId then
+                    local hitStr = "_G.__covhit(" .. tostring(marker.allocatedId) .. ");"
+                    if marker.tokenIdx then
+                        table.insert(lineInsertions, { col = tokens[marker.tokenIdx].column, tokenIdx = marker.tokenIdx, text = hitStr, priority = 2 })
+                    else
+                        table.insert(modifications, hitStr)
+                    end
+                    stmtAdded += 1
+                end
+            end
+        end
+
         if isTernaryLine then
             -- Parse and replace ternary expression
             local branchInfo = branchInstrumentedLines[lineNo][1]
@@ -1008,6 +1029,8 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                 text = newText
                 linesToSkip = consumed - 1  -- Skip the consumed lines
                 branchAdded += 2 + (internalAdded or 0)
+                -- Clear lineInsertions as they are now invalid for this modified line
+                lineInsertions = {}
             else
                 -- Fallback to line-level instrumentation if parsing fails
                 for _, bInfo in ipairs(branchInstrumentedLines[lineNo]) do
@@ -1028,27 +1051,6 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
         if lineHitId then
             table.insert(modifications, "_G.__covhit(" .. tostring(lineHitId) .. ");")
             stmtAdded += 1
-        end
-
-        local lineInsertions = {}
-        if functionDeclarationLines[lineNo] then
-            for _, decl in ipairs(functionDeclarationLines[lineNo]) do
-                table.insert(lineInsertions, { col = tokens[decl.tokenIdx].column, tokenIdx = decl.tokenIdx, text = "_G.__covfn(" .. tostring(decl.id) .. ");", priority = 1 })
-                fnAdded += 1
-            end
-        end
-        if bodyHitMarkers then
-            for _, marker in ipairs(bodyHitMarkers) do
-                if marker.allocatedId then
-                    local hitStr = "_G.__covhit(" .. tostring(marker.allocatedId) .. ");"
-                    if marker.tokenIdx then
-                        table.insert(lineInsertions, { col = tokens[marker.tokenIdx].column, tokenIdx = marker.tokenIdx, text = hitStr, priority = 2 })
-                    else
-                        table.insert(modifications, hitStr)
-                    end
-                    stmtAdded += 1
-                end
-            end
         end
 
         if #lineInsertions > 0 then

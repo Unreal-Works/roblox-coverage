@@ -831,7 +831,57 @@ addTest("regression: instrumentSource JestEach.each", function()
     expect(added).toBe(7)
 end)
 
+addTest("regression: instrumentSource JestEach.bind.eachBind", function()
+    local coverage = parser.ensureCoverage()
+    local source = [[local function eachBind(title: string, test: Global_EachTestFn<EachCallback>, timeout: number?): ()
+    title = convertDescriptorToString(title)
+end]]
+    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+    expect(instrumented).toBe([[local function eachBind(title: string, test: Global_EachTestFn<EachCallback>, timeout: number?): () _G.__covfn(1);
+    _G.__covhit(1); title = convertDescriptorToString(title)
+end]])
+    expect(added).toBe(2)
+end)
 
+addTest("regression: instrumentSource JestEach.install", function()
+    local coverage = parser.ensureCoverage()
+    local source = [=[local function install(
+	g: Global_Global,
+	table_: Global_EachTable,
+	...: any --[[ ROBLOX deviation: Upstream array type <Global.TemplateData>. Element type : unknown ]]
+)
+    local data = if select("#", ...) > 0 then { ... } else {}
+end]=]
+    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+    expect(instrumented).toBe([=[_G.__covhit(1); local function install(
+	g: Global_Global,
+	table_: Global_EachTable,
+	...: any --[[ ROBLOX deviation: Upstream array type <Global.TemplateData>. Element type : unknown ]]
+) _G.__covfn(1);
+    _G.__covhit(2); local data = if select("#", ...) > 0 then _G.__covbranch(1, 0)({ ... }) else _G.__covbranch(1, 1)({})
+end]=])
+    expect(added).toBe(5)
+end)
+
+addTest("regression: instrumentSource JestEach.bind.applyArguments", function()
+    local coverage = parser.ensureCoverage()
+    local source = [[return if supportsDone and #params < argumentCount
+    then function(done: Global_DoneFn)
+        return test(unpackTable(params), done)
+    end
+    else function()
+        return test(unpackTable(params))
+    end]]
+    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+    expect(instrumented).toBe([[_G.__covhit(1); return if supportsDone and #params < argumentCount
+    then _G.__covbranch(1, 0)(function(done: Global_DoneFn) _G.__covfn(1);
+        _G.__covhit(2); return test(unpackTable(params), done)
+    end)
+    else _G.__covbranch(1, 1)(function() _G.__covfn(2);
+        _G.__covhit(3); return test(unpackTable(params))
+    end)]])
+    expect(added).toBe(7)
+end)
 
 -- Run the tests
 runTests()
