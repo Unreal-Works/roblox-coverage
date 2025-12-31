@@ -4,6 +4,8 @@ export type Token = {
     kind: string,
     value: string,
     line: number,
+    column: number,
+    index: number,
 }
 
 --- Extract function name from tokens following 'function' keyword
@@ -149,60 +151,108 @@ function parser.tokenize(src: string): {Token}
     local line = 1
     local len = #src
 
-    local function push(kind: string, value: string)
-        tokens[#tokens + 1] = { kind = kind, value = value, line = line }
+    local column = 0
+    local function push(kind: string, value: string, startCol: number)
+        table.insert(tokens, { 
+            kind = kind, 
+            value = value, 
+            line = line, 
+            column = startCol,
+            index = #tokens + 1
+        })
     end
 
     while i <= len do
         local ch = string.sub(src, i, i)
+        local startCol = column
 
         if ch == " " or ch == "\t" then
             i += 1
+            column += 1
         elseif ch == "\n" then
             line += 1
+            column = 0
             i += 1
         elseif ch == "-" and string.sub(src, i + 1, i + 1) == "-" then
+            local startI = i
             -- Comment: line or block
             if string.sub(src, i + 2, i + 2) == "[" then
                 local nextIndex, nl = parser.tryScanLong(src, i + 2)
                 if nextIndex then
-                    line += nl
+                    local commentVal = string.sub(src, i, nextIndex - 1)
+                    if nl > 0 then
+                        line += nl
+                        -- Find column of last line of comment
+                        local lastNl = commentVal:find("\n[^\n]*$")
+                        if lastNl then
+                            column = #commentVal - lastNl
+                        else
+                            column += #commentVal
+                        end
+                    else
+                        column += #commentVal
+                    end
                     i = nextIndex
                 else
                     i = i + 2
+                    column += 2
                 end
             else
                 while i <= len and string.sub(src, i, i) ~= "\n" do
                     i += 1
                 end
+                -- We don't advance column here because it will stop at \n or EOF
+                -- If it stops at \n, the \n case will handle it.
+                -- However, we need to advance i and column for the text we skipped
+                column += (i - startI)
             end
         elseif ch == "'" or ch == '"' then
+            local startI = i
             local quote = ch
             i += 1
+            column += 1
             while i <= len do
                 local c = string.sub(src, i, i)
                 if c == "\\" then
                     i += 2
+                    column += 2
                 elseif c == quote then
                     i += 1
+                    column += 1
                     break
                 else
                     if c == "\n" then
                         line += 1
+                        column = 0
+                    else
+                        column += 1
                     end
                     i += 1
                 end
             end
-            push("string", "")
+            push("string", string.sub(src, startI, i - 1), startCol)
         elseif ch == "[" then
+            local startI = i
             local nextIndex, nl = parser.tryScanLong(src, i)
             if nextIndex then
-                line += nl
+                local strVal = string.sub(src, startI, nextIndex - 1)
+                if nl > 0 then
+                    line += nl
+                    local lastNl = strVal:find("\n[^\n]*$")
+                    if lastNl then
+                        column = #strVal - lastNl
+                    else
+                        column += #strVal
+                    end
+                else
+                    column += #strVal
+                end
                 i = nextIndex
-                push("string", "")
+                push("string", strVal, startCol)
             else
-                push("symbol", ch)
+                push("symbol", ch, startCol)
                 i += 1
+                column += 1
             end
         elseif string.match(ch, "%d") then
             local start = i
@@ -210,7 +260,9 @@ function parser.tokenize(src: string): {Token}
             while i <= len and string.match(string.sub(src, i, i), "[%d%.eE+-]") do
                 i += 1
             end
-            push("number", string.sub(src, start, i - 1))
+            local val = string.sub(src, start, i - 1)
+            push("number", val, startCol)
+            column += #val
         elseif string.match(ch, "[A-Za-z_]") then
             local start = i
             i += 1
@@ -219,23 +271,27 @@ function parser.tokenize(src: string): {Token}
             end
             local word = string.sub(src, start, i - 1)
             if KEYWORDS[word] then
-                push("keyword", word)
+                push("keyword", word, startCol)
             else
-                push("identifier", word)
+                push("identifier", word, startCol)
             end
+            column += #word
         else
             -- Prefer the longest match to stay close to Luau's lexer rules.
             if string.sub(src, i, i + 2) == "..." then
-                push("symbol", "...")
+                push("symbol", "...", startCol)
                 i += 3
+                column += 3
             else
                 local two = string.sub(src, i, i + 1)
                 if two == "==" or two == "~=" or two == "<=" or two == ">=" or two == "//" or two == ".." or two == "::" then
-                    push("symbol", two)
+                    push("symbol", two, startCol)
                     i += 2
+                    column += 2
                 else
-                    push("symbol", ch)
+                    push("symbol", ch, startCol)
                     i += 1
+                    column += 1
                 end
             end
         end
@@ -273,63 +329,134 @@ function parser.shouldInstrument(token: Token?): boolean
 end
 
 --- Replace ternary expression with instrumented version
-local function replaceTernaryExpression(lines: {string}, startLine: number, branchId: number): (string, number)
-    -- For multi-line ternaries, collect the full expression
-    local text = lines[startLine]
-    local lineNum = startLine + 1
-    local linesConsumed = 1
-    
-    -- Simple heuristic: collect lines until we find a line that doesn't look like continuation
-    -- This is a simplified approach - in a real parser, we'd use proper expression parsing
-    while lineNum <= #lines do
-        local nextLine = lines[lineNum]
-        local trimmed = nextLine:match("^%s*(.-)%s*$") or ""
-        
-        -- Stop if we find a keyword that indicates end of expression
-        if trimmed:match("^local%s+") or trimmed:match("^return%s+") or trimmed:match("^end$") or 
-           trimmed:match("^function%s+") or trimmed:match("^if%s+") or trimmed:match("^for%s+") or
-           trimmed:match("^while%s+") or trimmed:match("^repeat%s+") or trimmed:match("^_G%.") then
-            break
-        end
-        
-        -- Stop if we find a symbol that typically ends expressions
-        if trimmed:match("^[%)%]};]$") or trimmed:match("^,%s*$") then
-            break
-        end
-        
-        text = text .. "\n" .. nextLine
-        lineNum = lineNum + 1
-        linesConsumed = linesConsumed + 1
+local function replaceTernaryExpression(lines: {string}, startLine: number, endLine: number, branchId: number, filePath: string, coverage, functionDeclarationLines, functionInstrumentedLines, linesInCondition, firstTokens, tokensByLine, tokens, branchData): (string, number, number)
+    local text = ""
+    for i = startLine, math.min(endLine, #lines) do
+        if i > startLine then text = text .. "\n" end
+        text = text .. lines[i]
     end
+
+    -- Helper to get offset within 'text' for a token
+    local function getTokenOffset(tokenIdx)
+        if not tokenIdx then return nil end
+        local t = tokens[tokenIdx]
+        local offset = 0
+        for i = startLine, t.line - 1 do
+            offset = offset + #lines[i] + 1 -- +1 for newline
+        end
+        return offset + t.column
+    end
+
+    local ifPos = getTokenOffset(branchData.ifTokenIdx)
+    if not ifPos then return lines[startLine], 1, 0 end
     
-    -- Now parse the collected text
-    -- Find the positions more accurately
-    local ifStart = text:find("if%s+")
-    if not ifStart then return lines[startLine], 1 end
-    local ifEnd = ifStart + 2  -- after "if"
-    local conditionStart = ifEnd + 1
+    local thenPos = getTokenOffset(branchData.thenTokenIdx)
+    if not thenPos then return lines[startLine], 1, 0 end
+    local thenMatchEnd = thenPos + #tokens[branchData.thenTokenIdx].value
+    local thenKeyword = text:sub(thenPos + 1, thenMatchEnd)
     
-    local thenStart = text:find("then%s+", ifEnd)
-    if not thenStart then return lines[startLine], 1 end
-    local thenEnd = thenStart + 3  -- after "then"
-    local thenExprStart = thenEnd + 1
+    local elsePos = getTokenOffset(branchData.elseIdx)
+    if not elsePos then return lines[startLine], 1, 0 end
+    local elseMatchEnd = elsePos + #tokens[branchData.elseIdx].value
+    local elseKeyword = text:sub(elsePos + 1, elseMatchEnd)
     
-    local elseStart = text:find("else%s+", thenEnd)
-    if not elseStart then return lines[startLine], 1 end
-    local elseEnd = elseStart + 3  -- after "else"
-    local elseExprStart = elseEnd + 1
+    local endPos = getTokenOffset(branchData.endTokenIdx)
+    if not endPos then return lines[startLine], 1, 0 end
+    local elseExprEnd = endPos + #tokens[branchData.endTokenIdx].value
     
-    -- Extract parts
-    local beforeIf = text:sub(1, ifStart - 1)
-    local condition = text:sub(conditionStart, thenStart - 1):match("^%s*(.-)%s*$") or ""
-    local thenExpr = text:sub(thenExprStart, elseStart - 1):match("^%s*(.-)%s*$") or ""
-    local elseExpr = text:sub(elseExprStart):match("^%s*(.-)%s*$") or ""
+    -- Extract parts preserving EVERYTHING except where we inject
+    local beforeThen = text:sub(1, thenPos)
+    local thenToElse = text:sub(thenMatchEnd + 1, elsePos)
+    local elseToEnd = text:sub(elseMatchEnd + 1, elseExprEnd)
+    local afterTernary = text:sub(elseExprEnd + 1)
     
-    -- Build the instrumented version
-    local instrumented = string.format("%sif %s then _G.__covbranch(%d, 0)(%s) else _G.__covbranch(%d, 1)(%s)",
-        beforeIf, condition, branchId, thenExpr, branchId, elseExpr)
+    -- Function to instrument internal expressions without recursion
+    local function instrumentInternal(partText: string, partStartLine: number)
+        local partLines = {}
+        local current = partText
+        local startIdx = 1
+        while true do
+            local nl = current:find("\n", startIdx, true)
+            if not nl then table.insert(partLines, current:sub(startIdx)) break end
+            table.insert(partLines, current:sub(startIdx, nl-1))
+            startIdx = nl + 1
+        end
+        
+        local addedCount = 0
+        local result = {}
+        for i, lineText in ipairs(partLines) do
+            local currentLineNo = partStartLine + i - 1
+            local modifications = {}
+            local token = firstTokens[currentLineNo]
+            local trimmed = lineText:match("^%s*(.-)%s*$") or ""
+            local indent = lineText:match("^(%s*)") or ""
+            
+            if (currentLineNo ~= startLine) then
+                if functionDeclarationLines[currentLineNo] then
+                    local modStr = "_G.__covfn(" .. tostring(functionDeclarationLines[currentLineNo]) .. ");"
+                    if trimmed:find("end") then
+                        local beforeEnd = trimmed:gsub("(%s*end%s*)$", "")
+                        local endPart = trimmed:match("(%s*end%s*)$") or "end"
+                        lineText = indent .. beforeEnd .. " " .. modStr .. " " .. endPart:gsub("^%s*", "")
+                    else
+                        lineText = lineText .. " " .. modStr
+                    end
+                    trimmed = lineText:match("^%s*(.-)%s*$") or ""
+                    addedCount += 1
+                end
+                
+                if functionInstrumentedLines[currentLineNo] then
+                    local id = coverage.nextId
+                    coverage.nextId += 1
+                    coverage.map[id] = { file = filePath, line = currentLineNo }
+                    table.insert(modifications, "_G.__covhit(" .. tostring(id) .. ");")
+                    addedCount += 1
+                end
+                
+                if (parser.shouldInstrument(token) and trimmed ~= "" and not linesInCondition[currentLineNo] and not functionInstrumentedLines[currentLineNo] and not functionDeclarationLines[currentLineNo]) then
+                    -- For ternary branches, we only instrument lines AFTER the first line (the expression itself is implicitly hit by the branch)
+                    if i > 1 then
+                        local id = coverage.nextId
+                        coverage.nextId += 1
+                        coverage.map[id] = { file = filePath, line = currentLineNo }
+                        table.insert(modifications, "_G.__covhit(" .. tostring(id) .. ");")
+                        addedCount += 1
+                    end
+                end
+            end
+            
+            if #modifications > 0 then
+                result[i] = indent .. table.concat(modifications, " ") .. " " .. trimmed
+            else
+                result[i] = lineText
+            end
+        end
+        return table.concat(result, "\n"), addedCount
+    end
+
+    -- Helper to trim but keep track of shared coverage
+    local function instrumentPart(part: string, partStartLine: number)
+        local trimmed = part:match("^%s*(.-)%s*$") or ""
+        local prefix = part:match("^(%s*)") or ""
+        local suffix = part:match("(%s*)$") or ""
+        local instrumented, added = instrumentInternal(trimmed, partStartLine)
+        return instrumented, prefix, suffix, added
+    end
+
+    local _, thenLinesOffset = text:sub(1, thenMatchEnd):gsub("\n", "\n")
+    local _, elseLinesOffset = text:sub(1, elseMatchEnd):gsub("\n", "\n")
     
-    return instrumented, linesConsumed
+    local instrumentedThen, prefixThen, suffixThen, thenAdded = instrumentPart(thenToElse, startLine + thenLinesOffset)
+    local instrumentedElse, prefixElse, suffixElse, elseAdded = instrumentPart(elseToEnd, startLine + elseLinesOffset)
+    
+    -- Build the instrumented version by wrapping the results
+    local instrumented = string.format("%s%s%s_G.__covbranch(%d, 0)(%s)%s%s%s_G.__covbranch(%d, 1)(%s)%s",
+        beforeThen, thenKeyword, prefixThen, branchId, instrumentedThen, suffixThen, elseKeyword, prefixElse, branchId, instrumentedElse, suffixElse .. afterTernary)
+    
+    local _, linesConsumed = text:gsub("\n", "\n")
+    linesConsumed = linesConsumed + 1
+    
+    return instrumented, linesConsumed, thenAdded + elseAdded
 end
 
 --- Instrument source code by injecting coverage hit calls
@@ -371,6 +498,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
             -- Find the line after the function declaration (after opening paren or first line of body)
             -- We need to find the line right after 'function name(params)' which would be the first body line
             local bodyLineNo = nil
+            local signatureEndLine = token.line
             local parenDepth = 0
             local foundParen = false
             
@@ -415,6 +543,8 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                             end
                         end
                         
+                        signatureEndLine = tokens[j-1].line
+                        
                         -- Now find the first actual statement in the function body
                         -- Skip to the first meaningful token that's not part of signature
                         while j <= #tokens do
@@ -457,7 +587,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
             }
             
             -- Mark this line for function instrumentation
-            functionDeclarationLines[token.line] = fnId
+            functionDeclarationLines[signatureEndLine] = fnId
             
             -- Instrument function body unless it's an anonymous function on the same line as its declaration
             if funcName ~= "<anonymous>" or bodyLineNo ~= token.line then
@@ -520,26 +650,51 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                 local depth = 1
                 local j = thenIdx + 1
                 local foundElse = false
-                local isTernary = true  -- Assume ternary until we find 'end'
                 
+                -- Detect if this is an if expression based on context
+                local firstOnLine = firstTokens[token.line]
+                local isTernary = (firstOnLine ~= token)
+                if not isTernary and i > 1 then
+                    local prev = tokens[i - 1]
+                    if prev.kind == "symbol" and (prev.value == "(" or prev.value == "{" or prev.value == "[" or prev.value == ",") then
+                        isTernary = true
+                    end
+                end
+                
+                local elseIdx = nil
+                local endTokenIdx = nil
                 while j <= #tokens and depth > 0 do
                     local t = tokens[j]
+                    
+                    if isTernary and depth == 1 and foundElse then
+                        -- For ternary expressions, we can stop when we find a token that indicates
+                        -- the end of the expression (after finding else)
+                        if t.kind == "symbol" and (t.value == ")" or t.value == "," or t.value == ";" or t.value == "]") then
+                            endTokenIdx = j - 1
+                            depth = 0
+                            break
+                        elseif t.kind == "keyword" and (t.value == "local" or t.value == "return" or t.value == "end" or t.value == "function") then
+                            endTokenIdx = j - 1
+                            depth = 0
+                            break
+                        end
+                    end
+
                     if t.kind == "keyword" then
-                        if t.value == "if" then
+                        if t.value == "if" or t.value == "do" or t.value == "for" or t.value == "function" or t.value == "while" or t.value == "repeat" then
                             depth += 1
-                            isTernary = false  -- Nested if means this is not a simple ternary
-                        elseif t.value == "end" then
+                        elseif t.value == "end" or t.value == "until" then
                             depth -= 1
-                            isTernary = false  -- Found end, so this is a statement if, not ternary
                             if depth == 0 then
-                                -- Reached the end of this if statement
+                                isTernary = false  -- Found end matching our 'if', so it's a statement
+                                endTokenIdx = j
                                 -- If we never found an else, add implicit else branch
                                 if not foundElse then
                                     table.insert(branchLocations, {start = {line = t.line, column = 0}, ["end"] = {line = t.line, column = 0}})
                                 end
                             end
                         elseif depth == 1 and t.value == "elseif" then
-                            isTernary = false  -- elseif means this is a complex if statement
+                            isTernary = false  -- current ternary replacement doesn't handle multiple branches
                             -- Find the 'then' after elseif
                             local elseifThenIdx = nil
                             for k = j + 1, #tokens do
@@ -581,6 +736,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                             end
                         elseif depth == 1 and t.value == "else" then
                             foundElse = true
+                            elseIdx = j
                             -- Else branch starts on next line, but skip lines containing 'else'
                             if j + 1 <= #tokens then
                                 local candidateLine = tokens[j + 1].line
@@ -599,18 +755,20 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                                 end
                             end
                         end
-                    elseif isTernary and depth == 1 and foundElse then
-                        -- For ternary expressions, we can stop when we find a token that indicates
-                        -- the end of the expression (after finding else)
-                        if t.kind == "symbol" and (t.value == ")" or t.value == "," or t.value == ";" or t.value == "]") then
-                            -- End of ternary expression
-                            depth = 0
-                        elseif t.kind == "keyword" and (t.value == "local" or t.value == "return" or t.value == "end" or t.value == "function") then
-                            -- End of ternary expression
-                            depth = 0
+                    elseif t.kind == "symbol" then
+                        if t.value == "(" or t.value == "{" or t.value == "[" then
+                            depth += 1
+                        elseif t.value == ")" or t.value == "}" or t.value == "]" then
+                            depth -= 1
                         end
                     end
-                    j += 1
+                    if depth > 0 then
+                        j += 1
+                    end
+                end
+                
+                if not endTokenIdx then
+                    endTokenIdx = math.min(j, #tokens)
                 end
                 
                 -- For ternary expressions, if we reached the end of tokens and found else, we're done
@@ -625,7 +783,12 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                         line = token.line,
                         file = filePath,
                         locations = branchLocations,
-                        isTernary = isTernary
+                        isTernary = isTernary,
+                        endLine = tokens[j-1].line,
+                        ifTokenIdx = i,
+                        thenTokenIdx = thenIdx,
+                        elseIdx = elseIdx,
+                        endTokenIdx = j - 1
                     }
                     
                     -- For ternary expressions, mark the 'if' line for both branches
@@ -655,63 +818,18 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
         local trimmed = string.match(text, "^%s*(.-)$") or ""
         local modifications = {}
         local linesToSkip = 0
+        local modAdded = #modifications
+        
         local isTernaryLine = false
-        
-        -- Add function declaration instrumentation if needed
-        if functionDeclarationLines[lineNo] then
-            local fnId = functionDeclarationLines[lineNo]
-            table.insert(modifications, "_G.__covfn(" .. tostring(fnId) .. ");")
-            fnAdded += 1
-        end
-        
-        -- Add branch instrumentation if needed
-        if branchInstrumentedLines[lineNo] then
-            -- Check if this is a ternary expression line
-            if #branchInstrumentedLines[lineNo] == 2 then
-                local branchId1 = branchInstrumentedLines[lineNo][1].branchId
-                local branchId2 = branchInstrumentedLines[lineNo][2].branchId
-                if branchId1 == branchId2 then
-                    isTernaryLine = true
-                end
-            end
-            
-            if isTernaryLine then
-                -- For ternary expressions, inject branch calls within the expression
-                local branchId = branchInstrumentedLines[lineNo][1].branchId
-                
-                -- Parse and replace ternary expression
-                local newText, consumed = replaceTernaryExpression(lines, lineNo, branchId)
-                
-                if newText ~= lines[lineNo] then
-                    text = newText
-                    linesToSkip = consumed - 1  -- Skip the consumed lines
-                    branchAdded += 2
-                else
-                    -- Fallback to line-level instrumentation if parsing fails
-                    for _, branchInfo in ipairs(branchInstrumentedLines[lineNo]) do
-                        table.insert(modifications, "_G.__covbranch(" .. tostring(branchInfo.branchId) .. ", " .. tostring(branchInfo.pathIndex) .. ");")
-                        branchAdded += 1
-                    end
-                end
-            else
-                -- Normal branch instrumentation
-                for _, branchInfo in ipairs(branchInstrumentedLines[lineNo]) do
-                    table.insert(modifications, "_G.__covbranch(" .. tostring(branchInfo.branchId) .. ", " .. tostring(branchInfo.pathIndex) .. ");")
-                    branchAdded += 1
-                end
+        if branchInstrumentedLines[lineNo] and #branchInstrumentedLines[lineNo] >= 2 then
+            local branchId1 = branchInstrumentedLines[lineNo][1].branchId
+            local branchId2 = branchInstrumentedLines[lineNo][2].branchId
+            if branchId1 == branchId2 then
+                isTernaryLine = true
             end
         end
-        
-        -- Add function body instrumentation if needed
-        if functionInstrumentedLines[lineNo] then
-            local id = coverage.nextId
-            coverage.nextId += 1
-            coverage.map[id] = { file = filePath, line = lineNo }
-            table.insert(modifications, "_G.__covhit(" .. tostring(id) .. ");")
-            stmtAdded += 1
-        end
-        
-        -- Add statement instrumentation if needed
+
+        local lineHitId = nil
         local isContinuation = false
         if token then
             local tokenInfoList = tokensByLine[lineNo]
@@ -732,32 +850,88 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
             end
         end
 
-        if (parser.shouldInstrument(token) and trimmed ~= "" and not linesInCondition[lineNo] and not functionInstrumentedLines[lineNo] and not isContinuation) and not isTernaryLine then
-            local id = coverage.nextId
+        if (parser.shouldInstrument(token) and trimmed ~= "" and not linesInCondition[lineNo] and not functionInstrumentedLines[lineNo] and not functionDeclarationLines[lineNo] and not isContinuation) then
+            -- Pre-allocate ID to ensure it is lower than nested ternary hits
+            lineHitId = coverage.nextId
             coverage.nextId += 1
-            coverage.map[id] = { file = filePath, line = lineNo }
-            table.insert(modifications, "_G.__covhit(" .. tostring(id) .. ");")
+            coverage.map[lineHitId] = { file = filePath, line = lineNo }
+        end
+
+        local bodyHitId = nil
+        if functionInstrumentedLines[lineNo] then
+            bodyHitId = coverage.nextId
+            coverage.nextId += 1
+            coverage.map[bodyHitId] = { file = filePath, line = lineNo }
+        end
+
+        -- Add function declaration instrumentation if needed
+        if functionDeclarationLines[lineNo] then
+            local fnId = functionDeclarationLines[lineNo]
+            table.insert(modifications, "_G.__covfn(" .. tostring(fnId) .. ");")
+            fnAdded += 1
+        end
+
+        if isTernaryLine then
+            -- Parse and replace ternary expression
+            local branchInfo = branchInstrumentedLines[lineNo][1]
+            local branchId = branchInfo.branchId
+            local branchData = coverage.branchMap[branchId]
+            
+            local newText, consumed, internalAdded = replaceTernaryExpression(lines, lineNo, branchData.endLine, branchId, filePath, coverage, functionDeclarationLines, functionInstrumentedLines, linesInCondition, firstTokens, tokensByLine, tokens, branchData)
+            
+            if newText ~= lines[lineNo] then
+                text = newText
+                linesToSkip = consumed - 1  -- Skip the consumed lines
+                branchAdded += 2 + (internalAdded or 0)
+            else
+                -- Fallback to line-level instrumentation if parsing fails
+                for _, branchInfo in ipairs(branchInstrumentedLines[lineNo]) do
+                    table.insert(modifications, "_G.__covbranch(" .. tostring(branchInfo.branchId) .. ", " .. tostring(branchInfo.pathIndex) .. ");")
+                    branchAdded += 1
+                end
+            end
+        else
+            -- Normal branch instrumentation
+            if branchInstrumentedLines[lineNo] then
+                for _, branchInfo in ipairs(branchInstrumentedLines[lineNo]) do
+                    table.insert(modifications, "_G.__covbranch(" .. tostring(branchInfo.branchId) .. ", " .. tostring(branchInfo.pathIndex) .. ");")
+                    branchAdded += 1
+                end
+            end
+        end
+
+        -- Add the pre-allocated hits
+        if bodyHitId then
+            table.insert(modifications, "_G.__covhit(" .. tostring(bodyHitId) .. ");")
+            stmtAdded += 1
+        end
+
+        if lineHitId then
+            table.insert(modifications, "_G.__covhit(" .. tostring(lineHitId) .. ");")
             stmtAdded += 1
         end
         
         -- Combine modifications with original line
         if #modifications > 0 then
+            local modStr = table.concat(modifications, " ")
             if functionDeclarationLines[lineNo] then
                 -- For function declarations, append the modification, but insert before 'end' if present
-                local modStr = table.concat(modifications, " ")
-                if trimmed:find("end") then
-                    local beforeEnd = trimmed:gsub("(%s*end%s*)$", "")
-                    local endPart = trimmed:match("(%s*end%s*)$") or "end"
-                    instrumented[#instrumented + 1] = indent .. beforeEnd .. " " .. modStr .. " " .. endPart:gsub("^%s*", "")
+                local currentIndent = string.match(text, "^(%s*)") or ""
+                local currentTrimmed = string.match(text, "^%s*(.-)$") or ""
+                if currentTrimmed:find("end") then
+                    local beforeEnd = currentTrimmed:gsub("(%s*end%s*)$", "")
+                    local endPart = currentTrimmed:match("(%s*end%s*)$") or "end"
+                    instrumented[#instrumented + 1] = currentIndent .. beforeEnd .. " " .. modStr .. " " .. endPart:gsub("^%s*", "")
                 else
                     instrumented[#instrumented + 1] = text .. " " .. modStr
                 end
             else
-                local prefix = indent .. table.concat(modifications, " ")
-                if trimmed ~= "" then
-                    instrumented[#instrumented + 1] = prefix .. " " .. trimmed
+                local currentIndent = string.match(text, "^(%s*)") or ""
+                local currentTrimmed = string.match(text, "^%s*(.-)$") or ""
+                if currentTrimmed ~= "" then
+                    instrumented[#instrumented + 1] = currentIndent .. modStr .. " " .. currentTrimmed
                 else
-                    instrumented[#instrumented + 1] = prefix
+                    instrumented[#instrumented + 1] = currentIndent .. modStr
                 end
             end
         else

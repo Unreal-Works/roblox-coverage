@@ -564,14 +564,14 @@ addTest("instrumentSource with function literal in method call", function()
         function() end
     )]]
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-    expect(instrumented).toBe([[_G.__covhit(1); self
+	expect(instrumented).toBe([[_G.__covhit(1); self
     :finally(function() _G.__covfn(1);
         _G.__covhit(2); task.spawn(thread)
     end)
     :catch(
         function() _G.__covfn(2); end
     )]])
-    expect(added).toBe(4)
+	expect(added).toBe(4)
 end)
 
 addTest("instrumentSource with literal in function call arguments", function()
@@ -585,55 +585,67 @@ addTest("instrumentSource with literal in function call arguments", function()
         describe :: FIXME_ANALYZE,
         false
     )]])
-    expect(added).toBe(1)
+	expect(added).toBe(1)
 end)
 
 addTest("instrumentSource with multi-line function signature", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[function _dispatchDescribe(
-		blockFn: BlockFn,
-		blockName: BlockNameLike,
-		mode: any?
-	): ()
-		return nil
-	end]]
+    blockFn: BlockFn,
+    blockName: BlockNameLike,
+    mode: any?
+): ()
+    return nil
+end]]
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-	-- Should not have instrumentation breaking the closing ) on the signature line
-	assert(instrumented:find("_G.__covfn.*;%s*%)") == nil)
-	-- Should only have instrumentation in the actual function body
-	assert(instrumented:find("return nil") ~= nil)
+	expect(instrumented).toBe([[function _dispatchDescribe(
+    blockFn: BlockFn,
+    blockName: BlockNameLike,
+    mode: any?
+): () _G.__covfn(1);
+    _G.__covhit(1); return nil
+end]])
+	expect(added).toBe(2)
 end)
 
 addTest("instrumentSource with if statement branch instrumentation", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[local function test()
-	local result = if typeof(value) == "function"
-		then setmetatable({}, {
-			__call = function(_self, ...)
-				return value(...)
-			end,
-		})
-		else value
-	end
-	return result
+    local result = if typeof(value) == "function"
+        then setmetatable({}, {
+            __call = function(_self, ...)
+                return value(...)
+            end,
+        })
+        else value
+    end
+    return result
 end]]
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-
-	-- Should not have branch instrumentation breaking the 'then' keyword
-	assert(instrumented:find("_G.__covbranch.*;%s*then") == nil)
-	-- Should have branch instrumentation on the correct line (after then)
-	assert(instrumented:find("then setmetatable") ~= nil)
+	expect(instrumented).toBe([[local function test() _G.__covfn(1);
+    _G.__covhit(1); local result = if typeof(value) == "function"
+        then _G.__covbranch(1, 0)(setmetatable({}, {
+            __call = function(_self, ...) _G.__covfn(2);
+                _G.__covhit(2); return value(...)
+            end,
+        }))
+        else _G.__covbranch(1, 1)(value)
+    end
+    _G.__covhit(3); return result
+end]])
+	expect(added).toBe(7)
 end)
 
 addTest("instrumentSource with ternary expression", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[local result = if condition then "true" else "false"]]
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-
+	-- Should have hit instrumentation for the local statement
+	-- Should have branch instrumentation for ternary expressions
 	expect(instrumented).toBe(
-		[[local result = if condition then _G.__covbranch(1, 0)("true") else _G.__covbranch(1, 1)("false")]]
+		[[_G.__covhit(1); local result = if condition then _G.__covbranch(1, 0)("true") else _G.__covbranch(1, 1)("false")]]
 	)
-	assert(added >= 2) -- Should have at least 2 branch instrumentations
+	expect(added).toBe(3) -- 1 hit + 2 branch instrumentations
 end)
 
 addTest("instrumentSource with complex ternary expression", function()
@@ -641,27 +653,24 @@ addTest("instrumentSource with complex ternary expression", function()
 	local source =
 		[[local tests = if isArrayTable(taggedTemplateData) then buildArrayTests(title, table_) else buildTemplateTests(title, table_, taggedTemplateData)]]
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-	-- Should have branch instrumentation for ternary expressions
-	assert(added >= 2) -- Should have at least 2 branch instrumentations
-	-- Should wrap the expressions properly
-	assert(instrumented:find("_G.__covbranch%([^,]+, 0%)%(buildArrayTests") ~= nil, "Should wrap first expression")
-	assert(instrumented:find("_G.__covbranch%([^,]+, 1%)%(buildTemplateTests") ~= nil, "Should wrap second expression")
-	-- Should not have line-level branch calls
-	assert(not instrumented:find("_G.__covbranch%([^,]+, %d+%)%s*;") ~= nil, "Should not have line-level branch calls")
+	expect(instrumented).toBe(
+		[[_G.__covhit(1); local tests = if isArrayTable(taggedTemplateData) then _G.__covbranch(1, 0)(buildArrayTests(title, table_)) else _G.__covbranch(1, 1)(buildTemplateTests(title, table_, taggedTemplateData))]]
+	)
+	expect(added).toBe(3) -- 1 hit + 2 branch instrumentations
 end)
 
 addTest("instrumentSource with multi-line ternary expression", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[local result = if someCondition then
-	complexFunction(arg1, arg2)
+    complexFunction(arg1, arg2)
 else
-	otherFunction(arg3, arg4)]]
+    otherFunction(arg3, arg4)]]
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-	-- Should have branch instrumentation for ternary expressions
-	assert(added >= 2) -- Should have at least 2 branch instrumentations
-	-- Should wrap the expressions properly
-	assert(instrumented:find("_G.__covbranch%([^,]+, 0%)%(complexFunction") ~= nil, "Should wrap first expression")
-	assert(instrumented:find("_G.__covbranch%([^,]+, 1%)%(otherFunction") ~= nil, "Should wrap second expression")
+	expect(instrumented).toBe([[_G.__covhit(1); local result = if someCondition then
+    _G.__covbranch(1, 0)(complexFunction(arg1, arg2))
+else
+    _G.__covbranch(1, 1)(otherFunction(arg3, arg4))]])
+	expect(added).toBe(3) -- 1 hit + 2 branch instrumentations
 end)
 
 addTest("regression: instrumentSource Promise.is", function()
