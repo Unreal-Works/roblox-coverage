@@ -778,11 +778,11 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                     if isTernary and depth == 1 and foundElse then
                         -- For ternary expressions, we can stop when we find a token that indicates
                         -- the end of the expression (after finding else)
-                        if t.kind == "symbol" and (t.value == ")" or t.value == "," or t.value == ";" or t.value == "]") then
+                        if t.kind == "symbol" and (t.value == ")" or t.value == "," or t.value == ";" or t.value == "]" or t.value == "}") then
                             endTokenIdx = j - 1
                             depth = 0
                             break
-                        elseif t.kind == "keyword" and (t.value == "local" or t.value == "return" or t.value == "end" or t.value == "function") then
+                        elseif t.kind == "keyword" and (t.value == "local" or t.value == "return" or t.value == "end" or t.value == "function" or t.value == "if" or t.value == "do" or t.value == "for" or t.value == "while" or t.value == "repeat" or t.value == "until" or t.value == "break" or t.value == "continue" or t.value == "elseif") then
                             endTokenIdx = j - 1
                             depth = 0
                             break

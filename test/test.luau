@@ -781,5 +781,28 @@ end
     expect(added).toBe(10)
 end)
 
+addTest("regression: instrumentSource JestEach.maybeHandleTemplateString", function()
+    local coverage = parser.ensureCoverage()
+    local source = [[local next = if i < #templateString then string.sub(templateString, i + 1, i + 1) else nil
+if i == #templateString then
+    if expressionStarted then
+        error("expression not closed")
+    end
+    table.insert(strings, string.sub(templateString, startIndex))
+end]]
+    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+    expect(instrumented).toBe([[_G.__covhit(1); local next = if i < #templateString then _G.__covbranch(1, 0)(string.sub(templateString, i + 1, i + 1)) else _G.__covbranch(1, 1)(nil)
+if i == #templateString then
+    _G.__covbranch(2, 0); if expressionStarted then
+        _G.__covbranch(3, 0); _G.__covhit(2); error("expression not closed")
+    end
+    _G.__covhit(3); table.insert(strings, string.sub(templateString, startIndex))
+end]])
+    expect(added).toBe(7)
+end)
+
+
+
+
 -- Run the tests
 runTests()
