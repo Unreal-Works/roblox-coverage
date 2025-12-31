@@ -883,5 +883,35 @@ addTest("regression: instrumentSource JestEach.bind.applyArguments", function()
     expect(added).toBe(7)
 end)
 
+addTest("regression: instrumentSource JestEach.table.interpolation.replaceKeyPathWithValue", function()
+    local coverage = parser.ensureCoverage()
+    local source = [[function replaceKeyPathWithValue(template: Template): (title: string, match: string) -> string
+    return function(title: string, match: string)
+        local newMatch = match:gsub("%$", "", 1) -- ROBLOX deviation: escape string
+        local keyPath = String.split(newMatch, ".")
+        local value = getPath(template, keyPath)
+        if isPrimitive(value) then
+            return title:gsub(match, tostring(value), 1)
+        end
+        return title:gsub(match, pretty(value, { maxDepth = 1, min = true }), 1)
+    end
+end]]
+    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+    expect(instrumented).toBe([[function replaceKeyPathWithValue(template: Template): (title: string, match: string) -> string _G.__covfn(1);
+    _G.__covhit(1); return function(title: string, match: string) _G.__covfn(2);
+        _G.__covhit(2); local newMatch = match:gsub("%$", "", 1) -- ROBLOX deviation: escape string
+        _G.__covhit(3); local keyPath = String.split(newMatch, ".")
+        _G.__covhit(4); local value = getPath(template, keyPath)
+        if isPrimitive(value) then
+            _G.__covbranch(1, 0); _G.__covhit(5); return title:gsub(match, tostring(value), 1)
+        end
+        _G.__covhit(6); return title:gsub(match, pretty(value, { maxDepth = 1, min = true }), 1)
+    end
+end]])
+    expect(added).toBe(9)
+end)
+
+
+
 -- Run the tests
 runTests()

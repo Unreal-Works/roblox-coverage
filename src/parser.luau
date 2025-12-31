@@ -284,7 +284,7 @@ function parser.tokenize(src: string): {Token}
                 column += 3
             else
                 local two = string.sub(src, i, i + 1)
-                if two == "==" or two == "~=" or two == "<=" or two == ">=" or two == "//" or two == ".." or two == "::" then
+                if two == "==" or two == "~=" or two == "<=" or two == ">=" or two == "//" or two == ".." or two == "::" or two == "->" then
                     push("symbol", two, startCol)
                     i += 2
                     column += 2
