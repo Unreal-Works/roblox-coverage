@@ -480,7 +480,7 @@ addTest("instrumentSource with multi-line if condition", function()
 	local source = "if x == 1\n\tand y == 2 then\n\treturn true\nend"
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
 	expect(instrumented).toBe("if x == 1\n\tand y == 2 then\n\t_G.__covbranch(1, 0); _G.__covhit(1); return true\nend")
-	expect(added).toBe(3)
+	expect(added).toBe(2)
 end)
 
 addTest("instrumentSource with multi-line elseif condition", function()

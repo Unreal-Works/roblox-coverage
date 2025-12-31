@@ -647,7 +647,6 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
         local text = lines[lineNo]
         local token = firstTokens[lineNo]
         local indent = string.match(text, "^(%s*)") or ""
-        indent = indent:gsub("\t", "        ")
         local trimmed = string.match(text, "^%s*(.-)$") or ""
         local modifications = {}
         local linesToSkip = 0
