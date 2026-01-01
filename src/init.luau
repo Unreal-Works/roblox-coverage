@@ -1,4 +1,4 @@
-local parser = require(script.parser)
+local parser = require("@self/parser")
 local coverage = {}
 
 function getModulesInIntersection(include: { Instance }, exclude: { Instance }): { ModuleScript }
