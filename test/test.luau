@@ -1101,5 +1101,32 @@ _G.__covhit(6); return exports]]
 	expect(added).toBe(6)
 end)
 
+addTest("regression: instrumentSource Expect._validateResult", function()
+	local coverage = parser.ensureCoverage()
+	local source = [[function _validateResult(result: any)
+    if
+        typeof(result) ~= "table"
+        or typeof(result.pass) ~= "boolean"
+        or (result.message and typeof(result.message) ~= "string" and typeof(result.message) ~= "function")
+    then
+        return "hi"
+    end
+end]]
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe([[function _validateResult(result: any) _G.__covfn(1);
+    if
+        typeof(result) ~= "table"
+        or typeof(result.pass) ~= "boolean"
+        or (result.message and typeof(result.message) ~= "string" and typeof(result.message) ~= "function")
+    then
+        _G.__covbranch(1, 0); _G.__covhit(1); return "hi"
+    end
+end]])
+	expect(added).toBe(3)
+end)
+
+
+
+
 -- Run the tests
 runTests()

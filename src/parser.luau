@@ -547,6 +547,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
             -- Find the line after the function declaration (after opening paren or first line of body)
             -- We need to find the line right after 'function name(params)' which would be the first body line
             local bodyLineNo = nil
+            local bodyStartTokenIdx = nil
             local signatureEndLine = token.line
             local parenDepth = 0
             local foundParen = false
@@ -654,6 +655,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                             -- Find the first token that indicates actual code
                             if parser.shouldInstrument(bt) or (bt.kind == "keyword" and bt.value == "end") then
                                 bodyLineNo = bt.line
+                                bodyStartTokenIdx = j
                                 break
                             end
                             j += 1
@@ -666,6 +668,12 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
             -- If we couldn't find params, just use next line after function keyword
             if not bodyLineNo then
                 bodyLineNo = token.line + 1
+            end
+
+            -- Ensure the function declaration marker stays before the body start
+            if bodyStartTokenIdx and signatureEndTokenIdx >= bodyStartTokenIdx and bodyStartTokenIdx > idx then
+                signatureEndTokenIdx = bodyStartTokenIdx - 1
+                signatureEndLine = tokens[signatureEndTokenIdx].line
             end
             
             -- Register function
@@ -709,15 +717,28 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                 k += 1
             end
 
-            -- Mark function body start line
-            if not functionInstrumentedLines[bodyLineNo] then
-                functionInstrumentedLines[bodyLineNo] = {}
+            -- Skip body hit if the function starts with a multi-line if/elseif condition
+            local skipBodyHit = false
+            if bodyStartTokenIdx and bodyStartTokenIdx > 1 then
+                local prevTok = tokens[bodyStartTokenIdx - 1]
+                if prevTok and prevTok.kind == "keyword" and (prevTok.value == "if" or prevTok.value == "elseif") then
+                    if prevTok.line < tokens[bodyStartTokenIdx].line and firstTokens[prevTok.line] == prevTok then
+                        skipBodyHit = true
+                    end
+                end
             end
-            
-            if bodyLineNo == signatureEndLine then
-                table.insert(functionInstrumentedLines[bodyLineNo], { tokenIdx = signatureEndTokenIdx, isEmpty = isEmpty, isDefinition = isDefinition })
-            else
-                table.insert(functionInstrumentedLines[bodyLineNo], { id = nil, isEmpty = isEmpty, isDefinition = isDefinition })
+
+            if not skipBodyHit then
+                -- Mark function body start line
+                if not functionInstrumentedLines[bodyLineNo] then
+                    functionInstrumentedLines[bodyLineNo] = {}
+                end
+                
+                if bodyLineNo == signatureEndLine then
+                    table.insert(functionInstrumentedLines[bodyLineNo], { tokenIdx = signatureEndTokenIdx, isEmpty = isEmpty, isDefinition = isDefinition })
+                else
+                    table.insert(functionInstrumentedLines[bodyLineNo], { id = nil, isEmpty = isEmpty, isDefinition = isDefinition })
+                end
             end
         end
     end
@@ -1031,6 +1052,8 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                 elseif prev.kind == "keyword" then
                     local v = prev.value
                     if v == "and" or v == "or" or v == "not" or v == "in" then
+                        isContinuation = true
+                    elseif (v == "if" or v == "elseif") and prev.line < token.line then
                         isContinuation = true
                     end
                 end
