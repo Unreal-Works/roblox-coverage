@@ -1209,8 +1209,27 @@ until not (index ~= nil)]])
 	expect(added).toBe(9)
 end)
 
-
-
+addTest("regression: instrumentSource Collections.printTableEntries", function()
+	local coverage = parser.ensureCoverage()
+	local source = [[if config.compareKeys ~= nil and config.compareKeys ~= Object.None
+    then config.compareKeys
+    else function(a, b)
+        return if type(a) .. tostring(a) < type(b) .. tostring(b)
+            then -1
+            else if type(a) .. tostring(a) == type(b) .. tostring(b) then 0 else 1
+    end
+end]]
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe([[if config.compareKeys ~= nil and config.compareKeys ~= Object.None
+    then _G.__covbranch(1, 0)(config.compareKeys)
+    else _G.__covbranch(1, 1)(function(a, b) _G.__covfn(1);
+        _G.__covhit(1); return if type(a) .. tostring(a) < type(b) .. tostring(b)
+            then _G.__covbranch(2, 0)(-1)
+            else _G.__covbranch(2, 1)(if type(a) .. tostring(a) == type(b) .. tostring(b) then _G.__covbranch(3, 0)(0) else _G.__covbranch(3, 1)(1))
+    end)
+end]])
+	expect(added).toBe(8)
+end)
 
 -- Run the tests
 runTests()

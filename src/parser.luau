@@ -779,7 +779,9 @@ replaceTernaryExpression = function(lines: {string}, startLine: number, endLine:
                                 local innerIfToken = tokens[innerBranchData.ifTokenIdx]
                                 
                                 -- Check if this inner ternary is within the then branch bounds
-                                if innerIfToken.line >= thenToken.line and innerBranchData.endLine <= elseTokenLine then
+                                -- The inner if must start BEFORE the outer else
+                                local innerIfPos = getTokenOffset(innerBranchData.ifTokenIdx)
+                                if innerIfPos and innerIfPos < nestedElsePos and innerIfToken.line >= thenToken.line and innerBranchData.endLine <= elseTokenLine then
                                     local innerInstrumented, _, _, innerAdded = instrumentNestedTernary(info.branchId, innerBranchData)
                                     if innerInstrumented then
                                         local innerIfPos = getTokenOffset(innerBranchData.ifTokenIdx)
@@ -910,13 +912,114 @@ replaceTernaryExpression = function(lines: {string}, startLine: number, endLine:
                                 local innerExprEnd = innerEndPos + #tokens[innerBranchData.endTokenIdx].value
 
                                 if (innerIfToken.line == elseToken.line or innerIfToken.line == elseToken.line + 1) and innerIfPos >= elseMatchEnd and innerExprEnd <= elseExprEnd then
-                                    local innerInstrumented, _, _, innerAdded = instrumentNestedTernary(info.branchId, innerBranchData)
-                                    if innerInstrumented then
-                                        prefixElse = text:sub(elseMatchEnd + 1, innerIfPos)
-                                        instrumentedElse = innerInstrumented
-                                        suffixElse = text:sub(innerExprEnd + 1, elseExprEnd)
-                                        elseAdded = innerAdded
-                                        nestedFound = true
+                                    -- Check if there's anything between else and the inner if besides whitespace
+                                    -- If there's a function/return/etc., we should NOT do direct replacement
+                                    local betweenElseAndIf = text:sub(elseMatchEnd + 1, innerIfPos)
+                                    local hasFunctionWrapper = false
+                                    -- Check if there are non-whitespace tokens between else and inner if
+                                    for k = branchData.elseIdx + 1, innerBranchData.ifTokenIdx - 1 do
+                                        local tk = tokens[k]
+                                        if tk.kind ~= "comment" then
+                                            -- There's something significant between else and inner if
+                                            hasFunctionWrapper = true
+                                            break
+                                        end
+                                    end
+                                    
+                                    if not hasFunctionWrapper then
+                                        local innerInstrumented, _, _, innerAdded = instrumentNestedTernary(info.branchId, innerBranchData)
+                                        if innerInstrumented then
+                                            prefixElse = betweenElseAndIf
+                                            instrumentedElse = innerInstrumented
+                                            suffixElse = text:sub(innerExprEnd + 1, elseExprEnd)
+                                            elseAdded = innerAdded
+                                            nestedFound = true
+                                            break
+                                        end
+                                    else
+                                        -- When there's a function wrapper, collect nested ternaries to replace within elseToEnd
+                                        -- then call instrumentPart on the result
+                                        -- Only collect TOP-LEVEL nested ternaries (not ones nested inside others)
+                                        local nestedTernariesInElse = {}
+                                        local seenBranchIdsInElse = {}
+                                        for innerLineNum = elseToken.line, branchData.endLine do
+                                            if branchInstrumentedLines[innerLineNum] then
+                                                for _, innerInfo in ipairs(branchInstrumentedLines[innerLineNum]) do
+                                                    if innerInfo.isTernary and not processedBranchIds[innerInfo.branchId] and not seenBranchIdsInElse[innerInfo.branchId] then
+                                                        local innerBD = coverage.branchMap[innerInfo.branchId]
+                                                        if innerBD then
+                                                            local innerIfP = getTokenOffset(innerBD.ifTokenIdx)
+                                                            local innerEndP = getTokenOffset(innerBD.endTokenIdx)
+                                                            if innerIfP and innerEndP then
+                                                                local innerExpEnd = innerEndP + #tokens[innerBD.endTokenIdx].value
+                                                                if innerIfP >= elseMatchEnd and innerExpEnd <= elseExprEnd then
+                                                                    -- Check if this ternary is nested inside another ternary we're collecting
+                                                                    local isNestedInAnother = false
+                                                                    for _, existing in ipairs(nestedTernariesInElse) do
+                                                                        if innerIfP > existing.ifPos and innerExpEnd <= existing.exprEnd then
+                                                                            isNestedInAnother = true
+                                                                            break
+                                                                        end
+                                                                    end
+                                                                    if not isNestedInAnother then
+                                                                        -- Also check if any existing entry is nested inside this one
+                                                                        local toRemove = {}
+                                                                        for i, existing in ipairs(nestedTernariesInElse) do
+                                                                            if existing.ifPos > innerIfP and existing.exprEnd <= innerExpEnd then
+                                                                                table.insert(toRemove, i)
+                                                                                seenBranchIdsInElse[existing.branchId] = nil
+                                                                            end
+                                                                        end
+                                                                        -- Remove nested ones in reverse order
+                                                                        for i = #toRemove, 1, -1 do
+                                                                            table.remove(nestedTernariesInElse, toRemove[i])
+                                                                        end
+                                                                        table.insert(nestedTernariesInElse, {
+                                                                            branchId = innerInfo.branchId,
+                                                                            branchData = innerBD,
+                                                                            ifPos = innerIfP,
+                                                                            exprEnd = innerExpEnd,
+                                                                        })
+                                                                        seenBranchIdsInElse[innerInfo.branchId] = true
+                                                                    end
+                                                                end
+                                                            end
+                                                        end
+                                                    end
+                                                end
+                                            end
+                                        end
+                                        
+                                        if #nestedTernariesInElse > 0 then
+                                            -- Sort by position in reverse order
+                                            table.sort(nestedTernariesInElse, function(a, b)
+                                                return a.ifPos > b.ifPos
+                                            end)
+                                            
+                                            local modifiedElse = elseToEnd
+                                            local totalAdded = 0
+                                            
+                                            for _, nt in ipairs(nestedTernariesInElse) do
+                                                local innerInstrumented, _, _, innerAdded = instrumentNestedTernary(nt.branchId, nt.branchData)
+                                                if innerInstrumented then
+                                                    -- Calculate positions relative to elseToEnd
+                                                    -- elseToEnd starts at position elseMatchEnd + 1 in text (1-indexed for Lua)
+                                                    -- innerIfPos is 0-indexed offset in text
+                                                    -- So position in elseToEnd (1-indexed) is: innerIfPos - elseMatchEnd
+                                                    local relStart = nt.ifPos - elseMatchEnd
+                                                    local relEnd = nt.exprEnd - elseMatchEnd
+                                                    
+                                                    modifiedElse = modifiedElse:sub(1, relStart) .. innerInstrumented .. modifiedElse:sub(relEnd + 1)
+                                                    totalAdded = totalAdded + innerAdded
+                                                    processedBranchIds[nt.branchId] = true
+                                                end
+                                            end
+                                            
+                                            -- Now call instrumentPart on the modified else branch
+                                            instrumentedElse, prefixElse, suffixElse, elseAdded = instrumentPart(modifiedElse, startLine + elseLinesOffset, tokens[branchData.elseIdx].column + #tokens[branchData.elseIdx].value)
+                                            elseAdded = elseAdded + totalAdded
+                                            nestedFound = true
+                                        end
                                         break
                                     end
                                 end
@@ -1268,6 +1371,19 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
                 if not isTernary and i > 1 then
                     local prev = tokens[i - 1]
                     if prev.kind == "symbol" and (prev.value == "(" or prev.value == "{" or prev.value == "[" or prev.value == ",") then
+                        isTernary = true
+                    end
+                end
+                
+                -- Additional heuristic: if 'then' is on a separate line and is the first token on that line,
+                -- this is likely a multi-line if-expression (ternary) pattern like:
+                -- if condition
+                --     then expression
+                --     else expression
+                if not isTernary and thenIdx then
+                    local thenToken = tokens[thenIdx]
+                    local thenFirstOnLine = firstTokens[thenToken.line]
+                    if thenToken.line > token.line and thenFirstOnLine == thenToken then
                         isTernary = true
                     end
                 end
