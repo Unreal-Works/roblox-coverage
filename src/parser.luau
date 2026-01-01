@@ -1038,7 +1038,25 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
         end
 
         -- Check statement hit
-        if (parser.shouldInstrument(token) and trimmed ~= "" and not linesInCondition[lNo] and not isFunctionDefinition and not isContinuation and not functionInstrumentedLines[lNo] and not functionDeclarationLines[lNo]) then
+        local isTypeDeclaration = false
+        if token and (token.value == "type" or token.value == "export") then
+            local lineTokens = tokensByLine[lNo]
+            if lineTokens then
+                if token.value == "type" then
+                    -- Check for type NAME
+                    if #lineTokens >= 2 and lineTokens[2].token.kind == "identifier" then
+                        isTypeDeclaration = true
+                    end
+                elseif token.value == "export" then
+                    -- Check for export type
+                    if #lineTokens >= 2 and lineTokens[2].token.value == "type" then
+                        isTypeDeclaration = true
+                    end
+                end
+            end
+        end
+
+        if (not isTypeDeclaration and parser.shouldInstrument(token) and trimmed ~= "" and not linesInCondition[lNo] and not isFunctionDefinition and not isContinuation and not functionInstrumentedLines[lNo] and not functionDeclarationLines[lNo]) then
             local id = coverage.nextId
             coverage.nextId += 1
             coverage.map[id] = { file = filePath, line = lNo }

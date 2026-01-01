@@ -413,6 +413,20 @@ addTest("instrumentSource only whitespace", function()
 	expect(added).toBe(0)
 end)
 
+addTest("instrumentSource type", function()
+	local coverage = parser.ensureCoverage()
+	local instrumented, added = parser.instrumentSource("type ABC = string", "test.lua", coverage)
+	expect(instrumented).toBe("type ABC = string")
+	expect(added).toBe(0)
+end)
+
+addTest("instrumentSource export type", function()
+	local coverage = parser.ensureCoverage()
+	local instrumented, added = parser.instrumentSource("export type ABC = string", "test.lua", coverage)
+	expect(instrumented).toBe("export type ABC = string")
+	expect(added).toBe(0)
+end)
+
 addTest("instrumentSource with function", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[function test()
@@ -704,48 +718,48 @@ end]])
 end)
 
 addTest("regression: instrumentSource Error.extend", function()
-    local coverage = parser.ensureCoverage()
-    local source = [[function Error:extend(options)
+	local coverage = parser.ensureCoverage()
+	local source = [[function Error:extend(options)
     options = options or {}
 
     options.kind = options.kind or self.kind
 
     return Error.new(options, self)
 end]]
-    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-    expect(instrumented).toBe([[function Error:extend(options) _G.__covfn(1);
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe([[function Error:extend(options) _G.__covfn(1);
     _G.__covhit(1); options = options or {}
 
     _G.__covhit(2); options.kind = options.kind or self.kind
 
     _G.__covhit(3); return Error.new(options, self)
 end]])
-    expect(added).toBe(4)
+	expect(added).toBe(4)
 end)
 
 addTest("regression: instrumentSource circus.test.todo", function()
-    local coverage = parser.ensureCoverage()
-    local source = [[test.todo = function(testName: Circus_TestName, ...: any): ()
+	local coverage = parser.ensureCoverage()
+	local source = [[test.todo = function(testName: Circus_TestName, ...: any): ()
     local rest = { ... }
     if #rest > 0 or typeof(testName) ~= "string" then
         error(ErrorWithStack.new("Todo must be called with only a description.", test.todo))
     end
     return _addTest(testName, "todo", function() end, test.todo)
 end]]
-    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-    expect(instrumented).toBe([[test.todo = function(testName: Circus_TestName, ...: any): () _G.__covfn(1);
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe([[test.todo = function(testName: Circus_TestName, ...: any): () _G.__covfn(1);
     _G.__covhit(1); local rest = { ... }
     if #rest > 0 or typeof(testName) ~= "string" then
         _G.__covbranch(1, 0); _G.__covhit(2); error(ErrorWithStack.new("Todo must be called with only a description.", test.todo))
     end
     return _addTest(testName, "todo", function() _G.__covfn(2); end, test.todo)
 end]])
-    expect(added).toBe(5)
+	expect(added).toBe(5)
 end)
 
 addTest("regression: instrumentSource JestEnvironmentLuau.new", function()
-    local coverage = parser.ensureCoverage()
-    local source = [[local JestEnvironmentLuau = {} :: JestEnvironmentLuau;
+	local coverage = parser.ensureCoverage()
+	local source = [[local JestEnvironmentLuau = {} :: JestEnvironmentLuau;
 (JestEnvironmentLuau :: any).__index = JestEnvironmentLuau
 
 function JestEnvironmentLuau.new(config: Config_ProjectConfig): JestEnvironmentLuau
@@ -761,8 +775,8 @@ function JestEnvironmentLuau.new(config: Config_ProjectConfig): JestEnvironmentL
 	return (self :: any) :: JestEnvironmentLuau
 end
 ]]
-    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-    expect(instrumented).toBe([[_G.__covhit(1); local JestEnvironmentLuau = {} :: JestEnvironmentLuau;
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe([[_G.__covhit(1); local JestEnvironmentLuau = {} :: JestEnvironmentLuau;
 _G.__covhit(2); (JestEnvironmentLuau :: any).__index = JestEnvironmentLuau
 
 function JestEnvironmentLuau.new(config: Config_ProjectConfig): JestEnvironmentLuau _G.__covfn(1);
@@ -778,32 +792,34 @@ function JestEnvironmentLuau.new(config: Config_ProjectConfig): JestEnvironmentL
 	_G.__covhit(9); return (self :: any) :: JestEnvironmentLuau
 end
 ]])
-    expect(added).toBe(10)
+	expect(added).toBe(10)
 end)
 
 addTest("regression: instrumentSource JestEach.maybeHandleTemplateString", function()
-    local coverage = parser.ensureCoverage()
-    local source = [[local next = if i < #templateString then string.sub(templateString, i + 1, i + 1) else nil
+	local coverage = parser.ensureCoverage()
+	local source = [[local next = if i < #templateString then string.sub(templateString, i + 1, i + 1) else nil
 if i == #templateString then
     if expressionStarted then
         error("expression not closed")
     end
     table.insert(strings, string.sub(templateString, startIndex))
 end]]
-    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-    expect(instrumented).toBe([[_G.__covhit(1); local next = if i < #templateString then _G.__covbranch(1, 0)(string.sub(templateString, i + 1, i + 1)) else _G.__covbranch(1, 1)(nil)
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe(
+		[[_G.__covhit(1); local next = if i < #templateString then _G.__covbranch(1, 0)(string.sub(templateString, i + 1, i + 1)) else _G.__covbranch(1, 1)(nil)
 if i == #templateString then
     _G.__covbranch(2, 0); if expressionStarted then
         _G.__covbranch(3, 0); _G.__covhit(2); error("expression not closed")
     end
     _G.__covhit(3); table.insert(strings, string.sub(templateString, startIndex))
-end]])
-    expect(added).toBe(7)
+end]]
+	)
+	expect(added).toBe(7)
 end)
 
 addTest("regression: instrumentSource JestEach.each", function()
-    local coverage = parser.ensureCoverage()
-    local source = [[return setmetatable({
+	local coverage = parser.ensureCoverage()
+	local source = [[return setmetatable({
     withGlobal = function(g: Global)
         return function(table_: Global_EachTable, ...)
             return install(g, maybeHandleTemplateString(table_), ...)
@@ -815,8 +831,8 @@ addTest("regression: instrumentSource JestEach.each", function()
         return install(jestMethods :: Global, maybeHandleTemplateString(table_), ...)
     end,
 })]]
-    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-    expect(instrumented).toBe([[_G.__covhit(1); return setmetatable({
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe([[_G.__covhit(1); return setmetatable({
     withGlobal = function(g: Global) _G.__covfn(1);
         _G.__covhit(2); return function(table_: Global_EachTable, ...) _G.__covfn(2);
             _G.__covhit(3); return install(g, maybeHandleTemplateString(table_), ...)
@@ -828,64 +844,66 @@ addTest("regression: instrumentSource JestEach.each", function()
         _G.__covhit(4); return install(jestMethods :: Global, maybeHandleTemplateString(table_), ...)
     end,
 })]])
-    expect(added).toBe(7)
+	expect(added).toBe(7)
 end)
 
 addTest("regression: instrumentSource JestEach.bind.eachBind", function()
-    local coverage = parser.ensureCoverage()
-    local source = [[local function eachBind(title: string, test: Global_EachTestFn<EachCallback>, timeout: number?): ()
+	local coverage = parser.ensureCoverage()
+	local source = [[local function eachBind(title: string, test: Global_EachTestFn<EachCallback>, timeout: number?): ()
     title = convertDescriptorToString(title)
 end]]
-    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-    expect(instrumented).toBe([[local function eachBind(title: string, test: Global_EachTestFn<EachCallback>, timeout: number?): () _G.__covfn(1);
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe(
+		[[local function eachBind(title: string, test: Global_EachTestFn<EachCallback>, timeout: number?): () _G.__covfn(1);
     _G.__covhit(1); title = convertDescriptorToString(title)
-end]])
-    expect(added).toBe(2)
+end]]
+	)
+	expect(added).toBe(2)
 end)
 
 addTest("regression: instrumentSource JestEach.install", function()
-    local coverage = parser.ensureCoverage()
-    local source = [=[local function install(
+	local coverage = parser.ensureCoverage()
+	local source = [=[local function install(
 	g: Global_Global,
 	table_: Global_EachTable,
 	...: any --[[ ROBLOX deviation: Upstream array type <Global.TemplateData>. Element type : unknown ]]
 )
     local data = if select("#", ...) > 0 then { ... } else {}
 end]=]
-    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-    expect(instrumented).toBe([=[_G.__covhit(1); local function install(
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe([=[_G.__covhit(1); local function install(
 	g: Global_Global,
 	table_: Global_EachTable,
 	...: any --[[ ROBLOX deviation: Upstream array type <Global.TemplateData>. Element type : unknown ]]
 ) _G.__covfn(1);
     _G.__covhit(2); local data = if select("#", ...) > 0 then _G.__covbranch(1, 0)({ ... }) else _G.__covbranch(1, 1)({})
 end]=])
-    expect(added).toBe(5)
+	expect(added).toBe(5)
 end)
 
 addTest("regression: instrumentSource JestEach.bind.applyArguments", function()
-    local coverage = parser.ensureCoverage()
-    local source = [[return if supportsDone and #params < argumentCount
+	local coverage = parser.ensureCoverage()
+	local source = [[return if supportsDone and #params < argumentCount
     then function(done: Global_DoneFn)
         return test(unpackTable(params), done)
     end
     else function()
         return test(unpackTable(params))
     end]]
-    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-    expect(instrumented).toBe([[_G.__covhit(1); return if supportsDone and #params < argumentCount
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe([[_G.__covhit(1); return if supportsDone and #params < argumentCount
     then _G.__covbranch(1, 0)(function(done: Global_DoneFn) _G.__covfn(1);
         _G.__covhit(2); return test(unpackTable(params), done)
     end)
     else _G.__covbranch(1, 1)(function() _G.__covfn(2);
         _G.__covhit(3); return test(unpackTable(params))
     end)]])
-    expect(added).toBe(7)
+	expect(added).toBe(7)
 end)
 
 addTest("regression: instrumentSource JestEach.table.interpolation.replaceKeyPathWithValue", function()
-    local coverage = parser.ensureCoverage()
-    local source = [[function replaceKeyPathWithValue(template: Template): (title: string, match: string) -> string
+	local coverage = parser.ensureCoverage()
+	local source = [[function replaceKeyPathWithValue(template: Template): (title: string, match: string) -> string
     return function(title: string, match: string)
         local newMatch = match:gsub("%$", "", 1) -- ROBLOX deviation: escape string
         local keyPath = String.split(newMatch, ".")
@@ -896,8 +914,9 @@ addTest("regression: instrumentSource JestEach.table.interpolation.replaceKeyPat
         return title:gsub(match, pretty(value, { maxDepth = 1, min = true }), 1)
     end
 end]]
-    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-    expect(instrumented).toBe([[function replaceKeyPathWithValue(template: Template): (title: string, match: string) -> string _G.__covfn(1);
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe(
+		[[function replaceKeyPathWithValue(template: Template): (title: string, match: string) -> string _G.__covfn(1);
     _G.__covhit(1); return function(title: string, match: string) _G.__covfn(2);
         _G.__covhit(2); local newMatch = match:gsub("%$", "", 1) -- ROBLOX deviation: escape string
         _G.__covhit(3); local keyPath = String.split(newMatch, ".")
@@ -907,13 +926,14 @@ end]]
         end
         _G.__covhit(6); return title:gsub(match, pretty(value, { maxDepth = 1, min = true }), 1)
     end
-end]])
-    expect(added).toBe(9)
+end]]
+	)
+	expect(added).toBe(9)
 end)
 
 addTest("regression: instrumentSource circus.combined.dispatch", function()
-    local coverage = parser.ensureCoverage()
-    local source = [[local function dispatch(event: Circus_AsyncEvent): Promise<nil>
+	local coverage = parser.ensureCoverage()
+	local source = [[local function dispatch(event: Circus_AsyncEvent): Promise<nil>
     return Promise.resolve():andThen(function()
         for _, handler in ipairs(eventHandlers) do
             -- ROBLOX deviation START: need to check if value returned is a Promise, otherwise we can't run `:expect()`
@@ -928,8 +948,8 @@ addTest("regression: instrumentSource circus.combined.dispatch", function()
         end
     end)
 end]]
-    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-    expect(instrumented).toBe([[local function dispatch(event: Circus_AsyncEvent): Promise<nil> _G.__covfn(1);
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe([[local function dispatch(event: Circus_AsyncEvent): Promise<nil> _G.__covfn(1);
     _G.__covhit(1); return Promise.resolve():andThen(function() _G.__covfn(2);
         _G.__covhit(2); for _, handler in ipairs(eventHandlers) do
             -- ROBLOX deviation START: need to check if value returned is a Promise, otherwise we can't run `:expect()`
@@ -944,26 +964,26 @@ end]]
         end
     end)
 end]])
-    expect(added).toBe(7)
+	expect(added).toBe(7)
 end)
 
 addTest("regression: instrumentSource circus.combined.dispatch", function()
-    local coverage = parser.ensureCoverage()
-    local source = [[local function getTestDuration(test: Circus_TestEntry): number | nil
+	local coverage = parser.ensureCoverage()
+	local source = [[local function getTestDuration(test: Circus_TestEntry): number | nil
     local startedAt = test.startedAt
     return if typeof(startedAt) == "number" then DateTime.now().UnixTimestampMillis - startedAt else nil
 end]]
-    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-    expect(instrumented).toBe([[local function getTestDuration(test: Circus_TestEntry): number | nil _G.__covfn(1);
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe([[local function getTestDuration(test: Circus_TestEntry): number | nil _G.__covfn(1);
     _G.__covhit(1); local startedAt = test.startedAt
     _G.__covhit(2); return if typeof(startedAt) == "number" then _G.__covbranch(1, 0)(DateTime.now().UnixTimestampMillis - startedAt) else _G.__covbranch(1, 1)(nil)
 end]])
-    expect(added).toBe(5)
+	expect(added).toBe(5)
 end)
 
 addTest("regression: instrumentSource circus.formatNodeAssertErrors", function()
-    local coverage = parser.ensureCoverage()
-    local source = [[if originalError == nil then
+	local coverage = parser.ensureCoverage()
+	local source = [[if originalError == nil then
     error_ = asyncError
     -- ROBLOX deviation START: additional logic to handle Promise library error
 elseif originalError.kind == "ExecutionError" then
@@ -981,8 +1001,8 @@ elseif not Boolean.toJSBoolean(originalError.stack) then
 else
     error_ = originalError
 end]]
-    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-    expect(instrumented).toBe([[if originalError == nil then
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe([[if originalError == nil then
     _G.__covbranch(1, 0); _G.__covhit(1); error_ = asyncError
     -- ROBLOX deviation START: additional logic to handle Promise library error
 elseif originalError.kind == "ExecutionError" then
@@ -1000,19 +1020,59 @@ elseif not Boolean.toJSBoolean(originalError.stack) then
 else
     _G.__covbranch(1, 3); _G.__covhit(6); error_ = originalError
 end]])
-    expect(added).toBe(12)
+	expect(added).toBe(12)
 end)
 
 addTest("regression: instrumentSource circus.legacy-code-todo-rewrite.jestAdapter._addSnapshotData", function()
-    local coverage = parser.ensureCoverage()
-    local source = [[results.snapshot.unchecked = if not status.deleted then uncheckedCount else 0
+	local coverage = parser.ensureCoverage()
+	local source = [[results.snapshot.unchecked = if not status.deleted then uncheckedCount else 0
 -- Copy the array to prevent memory leaks
 results.snapshot.uncheckedKeys = Array.from(uncheckedKeys)]]
-    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-    expect(instrumented).toBe([[_G.__covhit(1); results.snapshot.unchecked = if not status.deleted then _G.__covbranch(1, 0)(uncheckedCount) else _G.__covbranch(1, 1)(0)
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe(
+		[[_G.__covhit(1); results.snapshot.unchecked = if not status.deleted then _G.__covbranch(1, 0)(uncheckedCount) else _G.__covbranch(1, 1)(0)
 -- Copy the array to prevent memory leaks
-_G.__covhit(2); results.snapshot.uncheckedKeys = Array.from(uncheckedKeys)]])
-    expect(added).toBe(4)
+_G.__covhit(2); results.snapshot.uncheckedKeys = Array.from(uncheckedKeys)]]
+	)
+	expect(added).toBe(4)
+end)
+
+addTest("regression: instrumentSource JestMockRbx", function()
+	local coverage = parser.ensureCoverage()
+	local source = [[local CurrentModule = script
+local InstanceProxy = require(CurrentModule.InstanceProxy)
+local DataModelMocker = require(CurrentModule.DataModelMocker)
+
+export type InstanceProxy<ClassType = Instance> = InstanceProxy.InstanceProxy<ClassType>
+export type Spied<ClassType = Instance> = InstanceProxy.Spied<ClassType>
+export type ProxyControls<ClassType = Instance> = InstanceProxy.ProxyControls<ClassType>
+
+export type DataModelMocker = DataModelMocker.DataModelMocker
+
+local exports = {}
+
+exports.DataModelMocker = DataModelMocker
+
+return exports]]
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe(
+		[[_G.__covhit(1); local CurrentModule = script
+_G.__covhit(2); local InstanceProxy = require(CurrentModule.InstanceProxy)
+_G.__covhit(3); local DataModelMocker = require(CurrentModule.DataModelMocker)
+
+export type InstanceProxy<ClassType = Instance> = InstanceProxy.InstanceProxy<ClassType>
+export type Spied<ClassType = Instance> = InstanceProxy.Spied<ClassType>
+export type ProxyControls<ClassType = Instance> = InstanceProxy.ProxyControls<ClassType>
+
+export type DataModelMocker = DataModelMocker.DataModelMocker
+
+_G.__covhit(4); local exports = {}
+
+_G.__covhit(5); exports.DataModelMocker = DataModelMocker
+
+_G.__covhit(6); return exports]]
+	)
+	expect(added).toBe(6)
 end)
 
 -- Run the tests
