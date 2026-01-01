@@ -548,6 +548,20 @@ addTest("instrumentSource with multi-line elseif condition", function()
 	expect(added).toBe(4)
 end)
 
+addTest("instrumentSource does not instrument on strings", function()
+    local coverage = parser.ensureCoverage()
+    local source = [[local str = "if x then end"
+local str2 = 'elseif y then return 1 end'
+local str3 = `else return 2 end`
+assert(`function hi`)]]
+    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+    expect(instrumented).toBe([[_G.__covhit(1); local str = "if x then end"
+_G.__covhit(2); local str2 = 'elseif y then return 1 end'
+_G.__covhit(3); local str3 = `else return 2 end`
+_G.__covhit(4); assert(`function hi`)]])
+    expect(added).toBe(4)
+end)
+
 addTest("instrumentSource elseif with body on next line", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[if x then

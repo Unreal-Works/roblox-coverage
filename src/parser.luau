@@ -206,7 +206,7 @@ function parser.tokenize(src: string): {Token}
                 -- However, we need to advance i and column for the text we skipped
                 column += (i - startI)
             end
-        elseif ch == "'" or ch == '"' then
+        elseif ch == "'" or ch == '"' or ch == "`" then
             local startI = i
             local quote = ch
             i += 1
