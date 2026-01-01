@@ -1,73 +1,25 @@
-local process = require("@lune/process")
+local framework = require("./framework")
+local expect = framework.expect
+local describe = framework.describe
 local parser = require("../src/parser")
-
-local tests = {}
-
-function addTest(name, fn)
-	table.insert(tests, { name = name, fn = fn })
-end
-
-function expect(actual)
-	local expectations
-	expectations = {
-		toBe = function(expected)
-			if actual ~= expected then
-				error("\nExpected:\n" .. tostring(expected) .. "\nReceived:\n" .. tostring(actual), 2)
-			end
-		end,
-		toBeGreaterThan = function(expected)
-			if actual <= expected then
-				error("\nExpected greater than:\n" .. tostring(expected) .. "\nReceived:\n" .. tostring(actual), 2)
-			end
-		end,
-		toBeUndefined = function()
-			return expectations.toBe(nil)
-		end,
-	}
-	return expectations
-end
-
-function runTests()
-	local passed, failed = 0, 0
-	for _, test in ipairs(tests) do
-		_G.__COVERAGE__ = nil -- Reset coverage between tests
-
-		local ok, err = pcall(test.fn)
-		if ok then
-			if table.find(process.args, "--verbose") then
-				print("[PASS]", test.name)
-			end
-			passed += 1
-		else
-			print("[FAIL]", test.name, err)
-			failed += 1
-		end
-	end
-	print("Tests finished. Passed:", passed, "Failed:", failed)
-	if failed > 0 then
-		process.exit(1)
-	else
-		process.exit(0)
-	end
-end
 
 -- Tests for parser functions
 
-addTest("normalizeNewlines", function()
+describe("normalizeNewlines", function()
 	expect(parser.normalizeNewlines("a\r\nb\r\nc")).toBe("a\nb\nc")
 	expect(parser.normalizeNewlines("a\rb\rc")).toBe("a\nb\nc")
 	expect(parser.normalizeNewlines("a\nb\nc")).toBe("a\nb\nc")
 	expect(parser.normalizeNewlines("")).toBe("")
 end)
 
-addTest("countNewlines", function()
+describe("countNewlines", function()
 	expect(parser.countNewlines("a\nb\nc")).toBe(2)
 	expect(parser.countNewlines("a\nb")).toBe(1)
 	expect(parser.countNewlines("abc")).toBe(0)
 	expect(parser.countNewlines("")).toBe(0)
 end)
 
-addTest("splitLines", function()
+describe("splitLines", function()
 	local lines = parser.splitLines("a\nb\nc")
 	expect(#lines).toBe(3)
 	expect(lines[1]).toBe("a")
@@ -84,7 +36,7 @@ addTest("splitLines", function()
 	expect(lines[1]).toBe("")
 end)
 
-addTest("tryScanLong", function()
+describe("tryScanLong", function()
 	local nextIndex, nl = parser.tryScanLong("[[hello]]", 1)
 	expect(nextIndex).toBe(10)
 	expect(nl).toBe(0)
@@ -100,7 +52,7 @@ addTest("tryScanLong", function()
 	expect(parser.tryScanLong("hello", 1)).toBeUndefined()
 end)
 
-addTest("tokenize", function()
+describe("tokenize", function()
 	local tokens = parser.tokenize("local x = 1")
 	expect(#tokens).toBe(4)
 	expect(tokens[1].kind).toBe("keyword")
@@ -121,14 +73,14 @@ addTest("tokenize", function()
 	expect(tokens[5].value).toBe("end")
 end)
 
-addTest("firstTokenPerLine", function()
+describe("firstTokenPerLine", function()
 	local tokens = parser.tokenize("local x = 1\nlocal y = 2")
 	local firstTokens = parser.firstTokenPerLine(tokens)
 	expect(firstTokens[1].value).toBe("local")
 	expect(firstTokens[2].value).toBe("local")
 end)
 
-addTest("shouldInstrument", function()
+describe("shouldInstrument", function()
 	local token = { kind = "keyword", value = "if" }
 	expect(parser.shouldInstrument(token :: any)).toBe(false)
 
@@ -144,7 +96,7 @@ addTest("shouldInstrument", function()
 	expect(parser.shouldInstrument(nil)).toBe(false)
 end)
 
-addTest("extractFunctionName", function()
+describe("extractFunctionName", function()
 	local tokens = parser.tokenize("function test() end")
 	local name = parser.extractFunctionName(tokens, 2)
 	expect(name).toBe("test")
@@ -162,7 +114,7 @@ addTest("extractFunctionName", function()
 	expect(name).toBe("<anonymous>")
 end)
 
-addTest("instrumentSource basic", function()
+describe("instrumentSource basic", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[local x = 1
 if x then
@@ -179,7 +131,7 @@ _G.__covbranch(1, 0); end]])
 	expect(added).toBe(2)
 end)
 
-addTest("ensureCoverage", function()
+describe("ensureCoverage", function()
 	_G.__COVERAGE__ = nil
 	local coverage = parser.ensureCoverage()
 	expect(type(coverage)).toBe("table")
@@ -191,18 +143,18 @@ addTest("ensureCoverage", function()
 end)
 
 -- Edge cases for normalizeNewlines
-addTest("normalizeNewlines mixed line endings", function()
+describe("normalizeNewlines mixed line endings", function()
 	expect(parser.normalizeNewlines("a\r\nb\rc\nd")).toBe("a\nb\nc\nd")
 	expect(parser.normalizeNewlines("\r\n\r\n\r\n")).toBe("\n\n\n")
 	expect(parser.normalizeNewlines("\n\n\n")).toBe("\n\n\n")
 end)
 
-addTest("normalizeNewlines with only CR", function()
+describe("normalizeNewlines with only CR", function()
 	expect(parser.normalizeNewlines("a\rb")).toBe("a\nb")
 end)
 
 -- Edge cases for countNewlines
-addTest("countNewlines edge cases", function()
+describe("countNewlines edge cases", function()
 	expect(parser.countNewlines("\n")).toBe(1)
 	expect(parser.countNewlines("\n\n\n")).toBe(3)
 	expect(parser.countNewlines("no newlines here")).toBe(0)
@@ -210,13 +162,13 @@ addTest("countNewlines edge cases", function()
 end)
 
 -- Edge cases for splitLines
-addTest("splitLines with trailing newline", function()
+describe("splitLines with trailing newline", function()
 	local lines = parser.splitLines("a\nb\nc\n")
 	expect(#lines).toBe(4)
 	expect(lines[4]).toBe("")
 end)
 
-addTest("splitLines with only newlines", function()
+describe("splitLines with only newlines", function()
 	local lines = parser.splitLines("\n\n\n")
 	expect(#lines).toBe(4)
 	expect(lines[1]).toBe("")
@@ -225,14 +177,14 @@ addTest("splitLines with only newlines", function()
 	expect(lines[4]).toBe("")
 end)
 
-addTest("splitLines single character", function()
+describe("splitLines single character", function()
 	local lines = parser.splitLines("x")
 	expect(#lines).toBe(1)
 	expect(lines[1]).toBe("x")
 end)
 
 -- Edge cases for tryScanLong
-addTest("tryScanLong with nested equals", function()
+describe("tryScanLong with nested equals", function()
 	local nextIndex, nl = parser.tryScanLong("[==[hello]==]", 1)
 	expect(nextIndex).toBe(14)
 	expect(nl).toBe(0)
@@ -242,25 +194,25 @@ addTest("tryScanLong with nested equals", function()
 	expect(nl).toBe(0)
 end)
 
-addTest("tryScanLong with multiple newlines", function()
+describe("tryScanLong with multiple newlines", function()
 	local nextIndex, nl = parser.tryScanLong("[[line1\nline2\nline3]]", 1)
 	expect(nextIndex).toBe(22)
 	expect(nl).toBe(2)
 end)
 
-addTest("tryScanLong unclosed", function()
+describe("tryScanLong unclosed", function()
 	local nextIndex, nl = parser.tryScanLong("[[unclosed", 1)
 	expect(nextIndex).toBe(11)
 	expect(nl).toBe(0)
 end)
 
-addTest("tryScanLong not a long string", function()
+describe("tryScanLong not a long string", function()
 	expect(parser.tryScanLong("[x]", 1)).toBeUndefined()
 	expect(parser.tryScanLong("hello", 1)).toBeUndefined()
 end)
 
 -- Edge cases for tokenize
-addTest("tokenize with strings", function()
+describe("tokenize with strings", function()
 	local tokens = parser.tokenize('"hello world"')
 	expect(#tokens).toBe(1)
 	expect(tokens[1].kind).toBe("string")
@@ -270,19 +222,19 @@ addTest("tokenize with strings", function()
 	expect(tokens[1].kind).toBe("string")
 end)
 
-addTest("tokenize with escaped quotes", function()
+describe("tokenize with escaped quotes", function()
 	local tokens = parser.tokenize('"hello\\"world"')
 	expect(#tokens).toBe(1)
 	expect(tokens[1].kind).toBe("string")
 end)
 
-addTest("tokenize with comments", function()
+describe("tokenize with comments", function()
 	local tokens = parser.tokenize("local x = 1 -- comment")
 	expect(tokens[4].value).toBe("1")
 	expect(#tokens).toBe(4)
 end)
 
-addTest("tokenize with block comments", function()
+describe("tokenize with block comments", function()
 	local tokens = parser.tokenize("local x = 1 --[[comment]] + 2")
 	expect(#tokens).toBe(6)
 	expect(tokens[1].value).toBe("local")
@@ -291,7 +243,7 @@ addTest("tokenize with block comments", function()
 	expect(tokens[6].value).toBe("2")
 end)
 
-addTest("tokenize with numbers", function()
+describe("tokenize with numbers", function()
 	local tokens = parser.tokenize("1 2.5 1e10 1E-5")
 	expect(#tokens).toBe(4)
 	expect(tokens[1].value).toBe("1")
@@ -300,7 +252,7 @@ addTest("tokenize with numbers", function()
 	expect(tokens[4].value).toBe("1E-5")
 end)
 
-addTest("tokenize with operators", function()
+describe("tokenize with operators", function()
 	local tokens = parser.tokenize("a == b and c ~= d or e <= f")
 	expect(tokens[2].value).toBe("==")
 	expect(tokens[4].value).toBe("and")
@@ -309,13 +261,13 @@ addTest("tokenize with operators", function()
 	expect(tokens[10].value).toBe("<=")
 end)
 
-addTest("tokenize with ellipsis", function()
+describe("tokenize with ellipsis", function()
 	local tokens = parser.tokenize("function f(...) end")
 	expect(#tokens).toBe(6)
 	expect(tokens[4].value).toBe("...")
 end)
 
-addTest("tokenize with long strings", function()
+describe("tokenize with long strings", function()
 	local tokens = parser.tokenize("x = [[hello\nworld]]")
 	expect(#tokens).toBe(3)
 	expect(tokens[1].value).toBe("x")
@@ -323,49 +275,49 @@ addTest("tokenize with long strings", function()
 	expect(tokens[3].kind).toBe("string")
 end)
 
-addTest("tokenize empty string", function()
+describe("tokenize empty string", function()
 	local tokens = parser.tokenize("")
 	expect(#tokens).toBe(0)
 end)
 
-addTest("tokenize only whitespace", function()
+describe("tokenize only whitespace", function()
 	local tokens = parser.tokenize("   \n  \t  ")
 	expect(#tokens).toBe(0)
 end)
 
 -- Edge cases for extractFunctionName
-addTest("extractFunctionName with nested dots", function()
+describe("extractFunctionName with nested dots", function()
 	local tokens = parser.tokenize("function obj.sub.method() end")
 	local name = parser.extractFunctionName(tokens, 2)
 	expect(name).toBe("obj.sub.method")
 end)
 
-addTest("extractFunctionName with colon", function()
+describe("extractFunctionName with colon", function()
 	local tokens = parser.tokenize("function a:b:c() end")
 	local name = parser.extractFunctionName(tokens, 2)
 	expect(name).toBe("a:b:c")
 end)
 
-addTest("extractFunctionName with mixed separators", function()
+describe("extractFunctionName with mixed separators", function()
 	local tokens = parser.tokenize("function obj.method:other() end")
 	local name = parser.extractFunctionName(tokens, 2)
 	expect(name).toBe("obj.method:other")
 end)
 
-addTest("extractFunctionName out of bounds", function()
+describe("extractFunctionName out of bounds", function()
 	local tokens = parser.tokenize("function")
 	local name = parser.extractFunctionName(tokens, 100)
 	expect(name).toBe("<anonymous>")
 end)
 
-addTest("extractFunctionName no identifier", function()
+describe("extractFunctionName no identifier", function()
 	local tokens = parser.tokenize("function (x) end")
 	local name = parser.extractFunctionName(tokens, 2)
 	expect(name).toBe("<anonymous>")
 end)
 
 -- Edge cases for ensureCoverage
-addTest("ensureCoverage multiple calls", function()
+describe("ensureCoverage multiple calls", function()
 	_G.__COVERAGE__ = nil
 	local coverage1 = parser.ensureCoverage()
 	local coverage2 = parser.ensureCoverage()
@@ -373,7 +325,7 @@ addTest("ensureCoverage multiple calls", function()
 	expect(coverage2.nextId).toBe(coverage1.nextId)
 end)
 
-addTest("ensureCoverage with existing data", function()
+describe("ensureCoverage with existing data", function()
 	_G.__COVERAGE__ = {
 		hits = { [1] = 5 },
 		map = { [1] = { file = "test.lua", line = 1 } },
@@ -391,7 +343,7 @@ addTest("ensureCoverage with existing data", function()
 	expect(coverage.hits[1]).toBe(5)
 end)
 
-addTest("ensureCoverage coverage functions exist", function()
+describe("ensureCoverage coverage functions exist", function()
 	parser.ensureCoverage()
 	expect(type(_G.__covhit)).toBe("function")
 	expect(type(_G.__covfn)).toBe("function")
@@ -399,35 +351,35 @@ addTest("ensureCoverage coverage functions exist", function()
 end)
 
 -- Edge cases for instrumentSource
-addTest("instrumentSource empty source", function()
+describe("instrumentSource empty source", function()
 	local coverage = parser.ensureCoverage()
 	local instrumented, added = parser.instrumentSource("", "test.lua", coverage)
 	expect(instrumented).toBe("")
 	expect(added).toBe(0)
 end)
 
-addTest("instrumentSource only whitespace", function()
+describe("instrumentSource only whitespace", function()
 	local coverage = parser.ensureCoverage()
 	local instrumented, added = parser.instrumentSource("   \n  \n  ", "test.lua", coverage)
 	expect(instrumented).toBe("   \n  \n  ")
 	expect(added).toBe(0)
 end)
 
-addTest("instrumentSource type", function()
+describe("instrumentSource type", function()
 	local coverage = parser.ensureCoverage()
 	local instrumented, added = parser.instrumentSource("type ABC = string", "test.lua", coverage)
 	expect(instrumented).toBe("type ABC = string")
 	expect(added).toBe(0)
 end)
 
-addTest("instrumentSource export type", function()
+describe("instrumentSource export type", function()
 	local coverage = parser.ensureCoverage()
 	local instrumented, added = parser.instrumentSource("export type ABC = string", "test.lua", coverage)
 	expect(instrumented).toBe("export type ABC = string")
 	expect(added).toBe(0)
 end)
 
-addTest("instrumentSource with function", function()
+describe("instrumentSource with function", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[function test()
   return 1
@@ -440,7 +392,7 @@ end]]
 end]])
 end)
 
-addTest("instrumentSource with multiple functions", function()
+describe("instrumentSource with multiple functions", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[function f1() end
 function f2() end]]
@@ -451,7 +403,7 @@ function f2() _G.__covfn(2); _G.__covhit(2); end]])
 	expect(added > 0).toBe(true)
 end)
 
-addTest("instrumentSource with nested if", function()
+describe("instrumentSource with nested if", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[if x then
   if y then
@@ -467,7 +419,7 @@ end]])
 	expect(added).toBe(3)
 end)
 
-addTest("instrumentSource with if-elseif-else", function()
+describe("instrumentSource with if-elseif-else", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[if x then
 elseif y then
@@ -485,7 +437,7 @@ end]])
 	expect(added).toBe(5)
 end)
 
-addTest("instrumentSource with comments", function()
+describe("instrumentSource with comments", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[local x = 1 -- this is a comment
 if x then
@@ -497,7 +449,7 @@ _G.__covbranch(1, 0); end]])
 	expect(added).toBe(2)
 end)
 
-addTest("instrumentSource with long strings", function()
+describe("instrumentSource with long strings", function()
 	local coverage = parser.ensureCoverage()
 	local source = "local x = [[hello\nworld]]\nlocal y = 2"
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
@@ -505,7 +457,7 @@ addTest("instrumentSource with long strings", function()
 	expect(added).toBe(2)
 end)
 
-addTest("instrumentSource with indentation", function()
+describe("instrumentSource with indentation", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[function test()
     local x = 1
@@ -523,7 +475,7 @@ end]])
 	expect(added).toBe(4)
 end)
 
-addTest("instrumentSource with multi-line if condition", function()
+describe("instrumentSource with multi-line if condition", function()
 	local coverage = parser.ensureCoverage()
 	local source = "if x == 1\n\tand y == 2 then\n\treturn true\nend"
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
@@ -531,7 +483,7 @@ addTest("instrumentSource with multi-line if condition", function()
 	expect(added).toBe(2)
 end)
 
-addTest("instrumentSource with multi-line elseif condition", function()
+describe("instrumentSource with multi-line elseif condition", function()
 	local coverage = parser.ensureCoverage()
 	local source = 'if x then\n\ta()\nelseif\n\ttype(x) == "table"\n\tand type(y) == "table"\nthen\n\tb()\nend'
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
@@ -548,7 +500,7 @@ addTest("instrumentSource with multi-line elseif condition", function()
 	expect(added).toBe(4)
 end)
 
-addTest("instrumentSource does not instrument on strings", function()
+describe("instrumentSource does not instrument on strings", function()
     local coverage = parser.ensureCoverage()
     local source = [[local str = "if x then end"
 local str2 = 'elseif y then return 1 end'
@@ -562,7 +514,7 @@ _G.__covhit(4); assert(`function hi`)]])
     expect(added).toBe(4)
 end)
 
-addTest("instrumentSource object assignments", function()
+describe("instrumentSource object assignments", function()
     local coverage = parser.ensureCoverage()
     local source = [[function meta:__newindex(key: unknown, value: unknown): ()
     (original :: any)[key] = value
@@ -574,7 +526,7 @@ end]])
     expect(added).toBe(2)
 end)
 
-addTest("instrumentSource elseif with body on next line", function()
+describe("instrumentSource elseif with body on next line", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[if x then
     a()
@@ -594,7 +546,7 @@ end]])
 	expect(added).toBe(4)
 end)
 
-addTest("instrumentSource with function literal in method call", function()
+describe("instrumentSource with function literal in method call", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[self
     :finally(function()
@@ -614,7 +566,7 @@ addTest("instrumentSource with function literal in method call", function()
 	expect(added).toBe(4)
 end)
 
-addTest("instrumentSource with literal in function call arguments", function()
+describe("instrumentSource with literal in function call arguments", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[bindEach(
         describe :: FIXME_ANALYZE,
@@ -628,7 +580,7 @@ addTest("instrumentSource with literal in function call arguments", function()
 	expect(added).toBe(1)
 end)
 
-addTest("instrumentSource with multi-line function signature", function()
+describe("instrumentSource with multi-line function signature", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[function _dispatchDescribe(
     blockFn: BlockFn,
@@ -648,7 +600,7 @@ end]])
 	expect(added).toBe(2)
 end)
 
-addTest("instrumentSource with if statement branch instrumentation", function()
+describe("instrumentSource with if statement branch instrumentation", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[local function test()
     local result = if typeof(value) == "function"
@@ -676,7 +628,7 @@ end]])
 	expect(added).toBe(7)
 end)
 
-addTest("instrumentSource with ternary expression", function()
+describe("instrumentSource with ternary expression", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[local result = if condition then "true" else "false"]]
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
@@ -688,7 +640,7 @@ addTest("instrumentSource with ternary expression", function()
 	expect(added).toBe(3) -- 1 hit + 2 branch instrumentations
 end)
 
-addTest("instrumentSource with complex ternary expression", function()
+describe("instrumentSource with complex ternary expression", function()
 	local coverage = parser.ensureCoverage()
 	local source =
 		[[local tests = if isArrayTable(taggedTemplateData) then buildArrayTests(title, table_) else buildTemplateTests(title, table_, taggedTemplateData)]]
@@ -699,7 +651,7 @@ addTest("instrumentSource with complex ternary expression", function()
 	expect(added).toBe(3) -- 1 hit + 2 branch instrumentations
 end)
 
-addTest("instrumentSource with multi-line ternary expression", function()
+describe("instrumentSource with multi-line ternary expression", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[local result = if someCondition then
     complexFunction(arg1, arg2)
@@ -713,7 +665,7 @@ else
 	expect(added).toBe(3) -- 1 hit + 2 branch instrumentations
 end)
 
-addTest("regression: instrumentSource Promise.is", function()
+describe("regression: instrumentSource Promise.is", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[if objectMetatable == Promise then
     return true
@@ -743,7 +695,7 @@ end]])
 	expect(added).toBe(6)
 end)
 
-addTest("regression: instrumentSource Error.extend", function()
+describe("regression: instrumentSource Error.extend", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[function Error:extend(options)
     options = options or {}
@@ -763,7 +715,7 @@ end]])
 	expect(added).toBe(4)
 end)
 
-addTest("regression: instrumentSource circus.test.todo", function()
+describe("regression: instrumentSource circus.test.todo", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[test.todo = function(testName: Circus_TestName, ...: any): ()
     local rest = { ... }
@@ -783,7 +735,7 @@ end]])
 	expect(added).toBe(5)
 end)
 
-addTest("regression: instrumentSource JestEnvironmentLuau.new", function()
+describe("regression: instrumentSource JestEnvironmentLuau.new", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[local JestEnvironmentLuau = {} :: JestEnvironmentLuau;
 (JestEnvironmentLuau :: any).__index = JestEnvironmentLuau
@@ -821,7 +773,7 @@ end
 	expect(added).toBe(10)
 end)
 
-addTest("regression: instrumentSource JestEach.maybeHandleTemplateString", function()
+describe("regression: instrumentSource JestEach.maybeHandleTemplateString", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[local next = if i < #templateString then string.sub(templateString, i + 1, i + 1) else nil
 if i == #templateString then
@@ -843,7 +795,7 @@ end]]
 	expect(added).toBe(7)
 end)
 
-addTest("regression: instrumentSource JestEach.each", function()
+describe("regression: instrumentSource JestEach.each", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[return setmetatable({
     withGlobal = function(g: Global)
@@ -873,7 +825,7 @@ addTest("regression: instrumentSource JestEach.each", function()
 	expect(added).toBe(7)
 end)
 
-addTest("regression: instrumentSource JestEach.bind.eachBind", function()
+describe("regression: instrumentSource JestEach.bind.eachBind", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[local function eachBind(title: string, test: Global_EachTestFn<EachCallback>, timeout: number?): ()
     title = convertDescriptorToString(title)
@@ -887,7 +839,7 @@ end]]
 	expect(added).toBe(2)
 end)
 
-addTest("regression: instrumentSource JestEach.install", function()
+describe("regression: instrumentSource JestEach.install", function()
 	local coverage = parser.ensureCoverage()
 	local source = [=[local function install(
 	g: Global_Global,
@@ -907,7 +859,7 @@ end]=])
 	expect(added).toBe(5)
 end)
 
-addTest("regression: instrumentSource JestEach.bind.applyArguments", function()
+describe("regression: instrumentSource JestEach.bind.applyArguments", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[return if supportsDone and #params < argumentCount
     then function(done: Global_DoneFn)
@@ -927,7 +879,7 @@ addTest("regression: instrumentSource JestEach.bind.applyArguments", function()
 	expect(added).toBe(7)
 end)
 
-addTest("regression: instrumentSource JestEach.table.interpolation.replaceKeyPathWithValue", function()
+describe("regression: instrumentSource JestEach.table.interpolation.replaceKeyPathWithValue", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[function replaceKeyPathWithValue(template: Template): (title: string, match: string) -> string
     return function(title: string, match: string)
@@ -957,7 +909,7 @@ end]]
 	expect(added).toBe(9)
 end)
 
-addTest("regression: instrumentSource circus.combined.dispatch", function()
+describe("regression: instrumentSource circus.combined.dispatch", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[local function dispatch(event: Circus_AsyncEvent): Promise<nil>
     return Promise.resolve():andThen(function()
@@ -993,7 +945,7 @@ end]])
 	expect(added).toBe(7)
 end)
 
-addTest("regression: instrumentSource circus.combined.dispatch", function()
+describe("regression: instrumentSource circus.combined.dispatch", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[local function getTestDuration(test: Circus_TestEntry): number | nil
     local startedAt = test.startedAt
@@ -1007,7 +959,7 @@ end]])
 	expect(added).toBe(5)
 end)
 
-addTest("regression: instrumentSource circus.formatNodeAssertErrors", function()
+describe("regression: instrumentSource circus.formatNodeAssertErrors", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[if originalError == nil then
     error_ = asyncError
@@ -1049,7 +1001,7 @@ end]])
 	expect(added).toBe(12)
 end)
 
-addTest("regression: instrumentSource circus.legacy-code-todo-rewrite.jestAdapter._addSnapshotData", function()
+describe("regression: instrumentSource circus.legacy-code-todo-rewrite.jestAdapter._addSnapshotData", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[results.snapshot.unchecked = if not status.deleted then uncheckedCount else 0
 -- Copy the array to prevent memory leaks
@@ -1063,7 +1015,7 @@ _G.__covhit(2); results.snapshot.uncheckedKeys = Array.from(uncheckedKeys)]]
 	expect(added).toBe(4)
 end)
 
-addTest("regression: instrumentSource JestMockRbx", function()
+describe("regression: instrumentSource JestMockRbx", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[local CurrentModule = script
 local InstanceProxy = require(CurrentModule.InstanceProxy)
@@ -1101,7 +1053,7 @@ _G.__covhit(6); return exports]]
 	expect(added).toBe(6)
 end)
 
-addTest("regression: instrumentSource Expect._validateResult", function()
+describe("regression: instrumentSource Expect._validateResult", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[function _validateResult(result: any)
     if
@@ -1125,7 +1077,7 @@ end]])
 	expect(added).toBe(3)
 end)
 
-addTest("regression: instrumentSource RobloxShared.expect.getObjectSubset", function()
+describe("regression: instrumentSource RobloxShared.expect.getObjectSubset", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[for i, key in
     ipairs(Array.filter(Object.keys(object), function(key)
@@ -1145,7 +1097,7 @@ end]])
 	expect(added).toBe(4)
 end)
 
-addTest("regression: instrumentSource ReactElement.getType", function()
+describe("regression: instrumentSource ReactElement.getType", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[if metatable ~= nil and typeof(metatable.__call) == "function" then
     return if Boolean.toJSBoolean(type_.displayName)
@@ -1163,7 +1115,7 @@ end]])
 	expect(added).toBe(5)
 end)
 
-addTest("regression: instrumentSource ReactElement.getType isForwardRef case", function()
+describe("regression: instrumentSource ReactElement.getType isForwardRef case", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[local functionName = if typeof(type_.render) == "function"
         and Boolean.toJSBoolean(debug.info(type_.render, "n"))
@@ -1187,7 +1139,7 @@ addTest("regression: instrumentSource ReactElement.getType isForwardRef case", f
 	expect(added).toBe(8)
 end)
 
-addTest("regression: instrumentSource ChalkLua.stringEncaseCRLFWithFirstIndex", function()
+describe("regression: instrumentSource ChalkLua.stringEncaseCRLFWithFirstIndex", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[repeat
     local gotCR = string.sub(string_, index - 1, index - 1) == "\r"
@@ -1209,7 +1161,7 @@ until not (index ~= nil)]])
 	expect(added).toBe(9)
 end)
 
-addTest("regression: instrumentSource Collections.printTableEntries", function()
+describe("regression: instrumentSource Collections.printTableEntries", function()
 	local coverage = parser.ensureCoverage()
 	local source = [[if config.compareKeys ~= nil and config.compareKeys ~= Object.None
     then config.compareKeys
@@ -1230,6 +1182,3 @@ end]]
 end]])
 	expect(added).toBe(8)
 end)
-
--- Run the tests
-runTests()
