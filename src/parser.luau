@@ -335,7 +335,7 @@ end
 --- Forward declaration for recursive call
 local replaceTernaryExpression
 
-replaceTernaryExpression = function(lines: {string}, startLine: number, endLine: number, branchId: number, filePath: string, coverage, functionDeclarationLines, functionInstrumentedLines, linesInCondition, firstTokens, tokensByLine, tokens, branchData, lineHitIds, branchInstrumentedLines, processedBranchIds): (string, number, number)
+replaceTernaryExpression = function(lines: {string}, startLine: number, endLine: number, branchId: number, filePath: string, coverage, functionDeclarationLines, functionInstrumentedLines, linesInCondition, firstTokens, tokensByLine, tokens, branchData, lineHitIds, branchInstrumentedLines, processedBranchIds): (string, number, number, number?, number?, {[number]: boolean}?, string?)
     -- Track which branch IDs we've already processed to avoid infinite recursion
     processedBranchIds = processedBranchIds or {}
     processedBranchIds[branchId] = true
@@ -478,7 +478,44 @@ replaceTernaryExpression = function(lines: {string}, startLine: number, endLine:
         local instrumented = table.concat(parts)
         local _, linesConsumed = text:gsub("\n", "\n")
         linesConsumed = linesConsumed + 1
-        return instrumented, linesConsumed, 0
+        local exprStart = ifPos + 1
+        local exprEnd = elseExprEnd
+
+        local exprParts = {}
+        local exprCursor = exprStart - 1
+        for _, seg in ipairs(segments) do
+            exprParts[#exprParts + 1] = text:sub(exprCursor + 1, seg.startOffset)
+
+            local exprEndPos = seg.endOffset
+            while exprEndPos > seg.startOffset and text:sub(exprEndPos, exprEndPos):match("%s") do
+                exprEndPos -= 1
+            end
+            local trailingExpr = text:sub(exprEndPos + 1, seg.endOffset)
+
+            exprParts[#exprParts + 1] = string.format("%s(%d, %d)(%s)", "_G.__covbranch", branchId, seg.path, text:sub(seg.startOffset + 1, exprEndPos))
+            exprParts[#exprParts + 1] = trailingExpr
+
+            exprCursor = seg.endOffset
+        end
+        exprParts[#exprParts + 1] = text:sub(exprCursor + 1, exprEnd)
+        local expressionInstrumented = table.concat(exprParts)
+
+        if branchInstrumentedLines then
+            for lineNum = startLine, branchData.endLine do
+                local lineEntries = branchInstrumentedLines[lineNum]
+                if lineEntries then
+                    local filtered = {}
+                    for _, info in ipairs(lineEntries) do
+                        if not processedBranchIds[info.branchId] then
+                            table.insert(filtered, info)
+                        end
+                    end
+                    branchInstrumentedLines[lineNum] = filtered
+                end
+            end
+        end
+
+        return instrumented, linesConsumed, 0, exprStart, exprEnd, processedBranchIds, expressionInstrumented
     end
     
     -- Extract parts preserving EVERYTHING except where we inject
@@ -867,19 +904,21 @@ replaceTernaryExpression = function(lines: {string}, startLine: number, endLine:
                         if innerBranchData then
                             local innerIfToken = tokens[innerBranchData.ifTokenIdx]
                             
-                            if innerIfToken.line == elseToken.line or innerIfToken.line == elseToken.line + 1 then
-                                local innerInstrumented, _, _, innerAdded = instrumentNestedTernary(info.branchId, innerBranchData)
-                                if innerInstrumented then
-                                    local innerIfPos = getTokenOffset(innerBranchData.ifTokenIdx)
-                                    local innerEndPos = getTokenOffset(innerBranchData.endTokenIdx)
-                                    local innerExprEnd = innerEndPos + #tokens[innerBranchData.endTokenIdx].value
-                                    
-                                    prefixElse = text:sub(elseMatchEnd + 1, innerIfPos)
-                                    instrumentedElse = innerInstrumented
-                                    suffixElse = text:sub(innerExprEnd + 1, elseExprEnd)
-                                    elseAdded = innerAdded
-                                    nestedFound = true
-                                    break
+                            local innerIfPos = getTokenOffset(innerBranchData.ifTokenIdx)
+                            local innerEndPos = getTokenOffset(innerBranchData.endTokenIdx)
+                            if innerIfPos and innerEndPos then
+                                local innerExprEnd = innerEndPos + #tokens[innerBranchData.endTokenIdx].value
+
+                                if (innerIfToken.line == elseToken.line or innerIfToken.line == elseToken.line + 1) and innerIfPos >= elseMatchEnd and innerExprEnd <= elseExprEnd then
+                                    local innerInstrumented, _, _, innerAdded = instrumentNestedTernary(info.branchId, innerBranchData)
+                                    if innerInstrumented then
+                                        prefixElse = text:sub(elseMatchEnd + 1, innerIfPos)
+                                        instrumentedElse = innerInstrumented
+                                        suffixElse = text:sub(innerExprEnd + 1, elseExprEnd)
+                                        elseAdded = innerAdded
+                                        nestedFound = true
+                                        break
+                                    end
                                 end
                             end
                         end
@@ -898,11 +937,42 @@ replaceTernaryExpression = function(lines: {string}, startLine: number, endLine:
     -- Build the instrumented version by wrapping the results
     local instrumented = string.format("%s%s%s_G.__covbranch(%d, 0)(%s)%s%s%s_G.__covbranch(%d, 1)(%s)%s",
         beforeThen, thenKeyword, prefixThen, branchId, instrumentedThen, suffixThen, elseKeyword, prefixElse, branchId, instrumentedElse, suffixElse .. afterTernary)
+
+    -- Compute the expression replacement slice for multi-ternary lines
+    local exprStart = ifPos + 1
+    local exprEnd = elseExprEnd
+    local expressionInstrumented = string.format("%s%s%s_G.__covbranch(%d, 0)(%s)%s%s%s_G.__covbranch(%d, 1)(%s)%s",
+        text:sub(exprStart, thenPos),
+        thenKeyword,
+        prefixThen,
+        branchId,
+        instrumentedThen,
+        suffixThen,
+        elseKeyword,
+        prefixElse,
+        branchId,
+        instrumentedElse,
+        suffixElse)
+
+    if branchInstrumentedLines then
+        for lineNum = startLine, branchData.endLine do
+            local lineEntries = branchInstrumentedLines[lineNum]
+            if lineEntries then
+                local filtered = {}
+                for _, info in ipairs(lineEntries) do
+                    if not processedBranchIds[info.branchId] then
+                        table.insert(filtered, info)
+                    end
+                end
+                branchInstrumentedLines[lineNum] = filtered
+            end
+        end
+    end
     
     local _, linesConsumed = text:gsub("\n", "\n")
     linesConsumed = linesConsumed + 1
-    
-    return instrumented, linesConsumed, thenAdded + elseAdded
+
+    return instrumented, linesConsumed, thenAdded + elseAdded, exprStart, exprEnd, processedBranchIds, expressionInstrumented
 end
 
 --- Instrument source code by injecting coverage hit calls
@@ -1551,12 +1621,12 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
         local linesToSkip = 0
         local lineHitId = lineHitIds[lineNo]
         local bodyHitMarkers = functionInstrumentedLines[lineNo]
-        local ternaryInfo = nil
+        local ternaryInfos = nil
         if branchInstrumentedLines[lineNo] then
             for _, info in ipairs(branchInstrumentedLines[lineNo]) do
                 if info.isTernary then
-                    ternaryInfo = info
-                    break
+                    ternaryInfos = ternaryInfos or {}
+                    table.insert(ternaryInfos, info)
                 end
             end
         end
@@ -1585,43 +1655,121 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
             end
         end
 
-        if ternaryInfo then
-            -- Parse and replace ternary expression on this line
-            local branchId = ternaryInfo.branchId
-            local branchData = coverage.branchMap[branchId]
-            local newText, consumed, internalAdded = replaceTernaryExpression(lines, lineNo, branchData.endLine, branchId, filePath, coverage, functionDeclarationLines, functionInstrumentedLines, linesInCondition, firstTokens, tokensByLine, tokens, branchData, lineHitIds, branchInstrumentedLines, nil)
+        if ternaryInfos and #ternaryInfos > 0 then
+            local singleLineTernaries = true
+            for _, info in ipairs(ternaryInfos) do
+                local bd = coverage.branchMap[info.branchId]
+                if not bd or bd.endLine ~= lineNo then
+                    singleLineTernaries = false
+                    break
+                end
+            end
 
-            if newText ~= lines[lineNo] then
-                text = newText
-                linesToSkip = consumed - 1  -- Skip the consumed lines
-                local branchCount = #branchData.locations
-                branchAdded += branchCount + (internalAdded or 0)
-                -- Clear lineInsertions as they are now invalid for this modified line
-                lineInsertions = {}
-
-                -- Remove ternary branch entries so they are not also emitted as plain branches
-                if branchInstrumentedLines[lineNo] then
-                    local filtered = {}
-                    for _, info in ipairs(branchInstrumentedLines[lineNo]) do
-                        if info.branchId ~= branchId or not info.isTernary then
-                            table.insert(filtered, info)
-                        end
+            if #ternaryInfos > 1 then
+                local replacements = {}
+                local processed = {}
+                local maxConsumed = 1
+                local maxEndLine = lineNo
+                for _, info in ipairs(ternaryInfos) do
+                    local branchData = coverage.branchMap[info.branchId]
+                    if branchData and branchData.endLine > maxEndLine then
+                        maxEndLine = branchData.endLine
                     end
-                    branchInstrumentedLines[lineNo] = filtered
                 end
 
-                -- Emit any remaining non-ternary branch instrumentation on this line (e.g., outer branches)
-                if branchInstrumentedLines[lineNo] then
+                for _, info in ipairs(ternaryInfos) do
+                    local branchId = info.branchId
+                    if not processed[branchId] then
+                        local branchData = coverage.branchMap[branchId]
+                        if branchData then
+                            local _, consumed, internalAdded, exprStart, exprEnd, processedSet, exprReplacement = replaceTernaryExpression(lines, lineNo, branchData.endLine, branchId, filePath, coverage, functionDeclarationLines, functionInstrumentedLines, linesInCondition, firstTokens, tokensByLine, tokens, branchData, lineHitIds, branchInstrumentedLines, processed)
+                            processed = processedSet or processed
+                            maxConsumed = math.max(maxConsumed, consumed or 1)
+                            if exprReplacement and exprStart and exprEnd then
+                                table.insert(replacements, {startPos = exprStart, endPos = exprEnd, text = exprReplacement, branchId = branchId, internalAdded = internalAdded or 0, branchData = branchData})
+                            end
+                        end
+                    end
+                end
+
+                if #replacements > 0 then
+                    table.sort(replacements, function(a, b)
+                        return a.startPos > b.startPos
+                    end)
+
+                    local blockText = ""
+                    for i = lineNo, maxEndLine do
+                        if i > lineNo then blockText ..= "\n" end
+                        blockText ..= lines[i]
+                    end
+
+                    for _, rep in ipairs(replacements) do
+                        blockText = blockText:sub(1, rep.startPos - 1) .. rep.text .. blockText:sub(rep.endPos + 1)
+                        branchAdded += #rep.branchData.locations + (rep.internalAdded or 0)
+                    end
+
+                    text = blockText
+                    linesToSkip = maxConsumed - 1
+                    lineInsertions = {}
+
+                    if branchInstrumentedLines[lineNo] then
+                        local filtered = {}
+                        for _, info in ipairs(branchInstrumentedLines[lineNo]) do
+                            if not processed[info.branchId] then
+                                table.insert(filtered, info)
+                            end
+                        end
+                        branchInstrumentedLines[lineNo] = filtered
+                    end
+
+                    if branchInstrumentedLines[lineNo] then
+                        for _, bInfo in ipairs(branchInstrumentedLines[lineNo]) do
+                            table.insert(modifications, "_G.__covbranch(" .. tostring(bInfo.branchId) .. ", " .. tostring(bInfo.pathIndex) .. ");")
+                            branchAdded += 1
+                        end
+                    end
+                else
                     for _, bInfo in ipairs(branchInstrumentedLines[lineNo]) do
                         table.insert(modifications, "_G.__covbranch(" .. tostring(bInfo.branchId) .. ", " .. tostring(bInfo.pathIndex) .. ");")
                         branchAdded += 1
                     end
                 end
             else
-                -- Fallback to line-level instrumentation if parsing fails
-                for _, bInfo in ipairs(branchInstrumentedLines[lineNo]) do
-                    table.insert(modifications, "_G.__covbranch(" .. tostring(bInfo.branchId) .. ", " .. tostring(bInfo.pathIndex) .. ");")
-                    branchAdded += 1
+                -- Parse and replace a single ternary expression on this line
+                local ternaryInfo = ternaryInfos[1]
+                local branchId = ternaryInfo.branchId
+                local branchData = coverage.branchMap[branchId]
+                local newText, consumed, internalAdded, _, _, processedSet = replaceTernaryExpression(lines, lineNo, branchData.endLine, branchId, filePath, coverage, functionDeclarationLines, functionInstrumentedLines, linesInCondition, firstTokens, tokensByLine, tokens, branchData, lineHitIds, branchInstrumentedLines, nil)
+
+                if newText ~= lines[lineNo] then
+                    text = newText
+                    linesToSkip = consumed - 1
+                    local branchCount = #branchData.locations
+                    branchAdded += branchCount + (internalAdded or 0)
+                    lineInsertions = {}
+
+                    if branchInstrumentedLines[lineNo] then
+                        local filtered = {}
+                        local processedBranches = processedSet or {[branchId] = true}
+                        for _, info in ipairs(branchInstrumentedLines[lineNo]) do
+                            if not processedBranches[info.branchId] then
+                                table.insert(filtered, info)
+                            end
+                        end
+                        branchInstrumentedLines[lineNo] = filtered
+                    end
+
+                    if branchInstrumentedLines[lineNo] then
+                        for _, bInfo in ipairs(branchInstrumentedLines[lineNo]) do
+                            table.insert(modifications, "_G.__covbranch(" .. tostring(bInfo.branchId) .. ", " .. tostring(bInfo.pathIndex) .. ");")
+                            branchAdded += 1
+                        end
+                    end
+                else
+                    for _, bInfo in ipairs(branchInstrumentedLines[lineNo]) do
+                        table.insert(modifications, "_G.__covbranch(" .. tostring(bInfo.branchId) .. ", " .. tostring(bInfo.pathIndex) .. ");")
+                        branchAdded += 1
+                    end
                 end
             end
         else

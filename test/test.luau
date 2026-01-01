@@ -1187,5 +1187,30 @@ addTest("regression: instrumentSource ReactElement.getType isForwardRef case", f
 	expect(added).toBe(8)
 end)
 
+addTest("regression: instrumentSource ChalkLua.stringEncaseCRLFWithFirstIndex", function()
+	local coverage = parser.ensureCoverage()
+	local source = [[repeat
+    local gotCR = string.sub(string_, index - 1, index - 1) == "\r"
+    returnValue ..= string.sub(string_, endIndex, if gotCR then index - 2 else index - 1) .. prefix .. (if gotCR
+        then "\r\n"
+        else "\n") .. postfix
+    endIndex = index + 1
+    index = string.find(string_, "\n", endIndex)
+until not (index ~= nil)]]
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe([[_G.__covhit(1); repeat
+    _G.__covhit(2); local gotCR = string.sub(string_, index - 1, index - 1) == "\r"
+    _G.__covhit(3); returnValue ..= string.sub(string_, endIndex, if gotCR then _G.__covbranch(1, 0)(index - 2) else _G.__covbranch(1, 1)(index - 1)) .. prefix .. (if gotCR
+        then _G.__covbranch(2, 0)("\r\n")
+        else _G.__covbranch(2, 1)("\n")) .. postfix
+    _G.__covhit(4); endIndex = index + 1
+    _G.__covhit(5); index = string.find(string_, "\n", endIndex)
+until not (index ~= nil)]])
+	expect(added).toBe(9)
+end)
+
+
+
+
 -- Run the tests
 runTests()
