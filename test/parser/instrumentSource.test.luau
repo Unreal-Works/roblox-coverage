@@ -172,29 +172,29 @@ describe("instrumentSource with multi-line elseif condition", function()
 end)
 
 describe("instrumentSource does not instrument on strings", function()
-    local coverage = ensureCoverage()
-    local source = [[local str = "if x then end"
+	local coverage = ensureCoverage()
+	local source = [[local str = "if x then end"
 local str2 = 'elseif y then return 1 end'
 local str3 = `else return 2 end`
 assert(`function hi`)]]
-    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-    expect(instrumented).toBe([[_G.__covhit(1); local str = "if x then end"
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe([[_G.__covhit(1); local str = "if x then end"
 _G.__covhit(2); local str2 = 'elseif y then return 1 end'
 _G.__covhit(3); local str3 = `else return 2 end`
 _G.__covhit(4); assert(`function hi`)]])
-    expect(added).toBe(4)
+	expect(added).toBe(4)
 end)
 
 describe("instrumentSource object assignments", function()
-    local coverage = ensureCoverage()
-    local source = [[function meta:__newindex(key: unknown, value: unknown): ()
+	local coverage = ensureCoverage()
+	local source = [[function meta:__newindex(key: unknown, value: unknown): ()
     (original :: any)[key] = value
 end]]
-    local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-    expect(instrumented).toBe([[function meta:__newindex(key: unknown, value: unknown): () _G.__covfn(1);
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe([[function meta:__newindex(key: unknown, value: unknown): () _G.__covfn(1);
     _G.__covhit(1); (original :: any)[key] = value
 end]])
-    expect(added).toBe(2)
+	expect(added).toBe(2)
 end)
 
 describe("instrumentSource elseif with body on next line", function()
@@ -704,8 +704,7 @@ exports.DataModelMocker = DataModelMocker
 
 return exports]]
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-	expect(instrumented).toBe(
-		[[_G.__covhit(1); local CurrentModule = script
+	expect(instrumented).toBe([[_G.__covhit(1); local CurrentModule = script
 _G.__covhit(2); local InstanceProxy = require(CurrentModule.InstanceProxy)
 _G.__covhit(3); local DataModelMocker = require(CurrentModule.DataModelMocker)
 
@@ -719,8 +718,7 @@ _G.__covhit(4); local exports = {}
 
 _G.__covhit(5); exports.DataModelMocker = DataModelMocker
 
-_G.__covhit(6); return exports]]
-	)
+_G.__covhit(6); return exports]])
 	expect(added).toBe(6)
 end)
 
@@ -898,17 +896,50 @@ end]=])
 	expect(added).toBe(6)
 end)
 
-describe("regression: instrumentSource Collections.printTableEntries", function()
+describe("regression: instrumentSource ReactComponentStackFrame.describeNativeComponentFrame name", function()
 	local coverage = ensureCoverage()
 	local source = [[local name = if type(fn) == "function"
     then debug.info(fn :: Function, "n")
     -- ROBLOX deviation :
     else if type(fn) == "table" then tostring(fn) else ""]]
 	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
-	expect(instrumented).toBe([[_G.__covhit(1); local name = if type(fn) == "function"
+	expect(instrumented).toBe(
+		[[_G.__covhit(1); local name = if type(fn) == "function"
     then _G.__covbranch(1, 0)(debug.info(fn :: Function, "n"))
     -- ROBLOX deviation :
-    else _G.__covbranch(1, 1)(if type(fn) == "table" then _G.__covbranch(2, 0)(tostring(fn)) else _G.__covbranch(2, 1)(""))]])
+    else _G.__covbranch(1, 1)(if type(fn) == "table" then _G.__covbranch(2, 0)(tostring(fn)) else _G.__covbranch(2, 1)(""))]]
+	)
 	expect(added).toBe(5)
 end)
 
+describe("regression: instrumentSource ReactComponentStackFrame.describeNativeComponentFrame while sample", function()
+	local coverage = ensureCoverage()
+	local source = [=[while
+    sampleIndex >= 2
+    and controlIndex >= 0
+    and sampleLines[sampleIndex] ~= controlLines[controlIndex]
+do
+    -- // We expect at least one stack frame to be shared.
+    -- // Typically this will be the root most one. However, stack frames may be
+    -- // cut off due to maximum stack limits. In this case, one maybe cut off
+    -- // earlier than the other. We assume that the sample is longer or the same
+    -- // and there for cut off earlier. So we should find the root most frame in
+    -- // the sample somewhere in the control.
+    controlIndex = controlIndex - 1
+end]=]
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe([[_G.__covhit(1); while
+    sampleIndex >= 2
+    and controlIndex >= 0
+    and sampleLines[sampleIndex] ~= controlLines[controlIndex]
+do
+    -- // We expect at least one stack frame to be shared.
+    -- // Typically this will be the root most one. However, stack frames may be
+    -- // cut off due to maximum stack limits. In this case, one maybe cut off
+    -- // earlier than the other. We assume that the sample is longer or the same
+    -- // and there for cut off earlier. So we should find the root most frame in
+    -- // the sample somewhere in the control.
+    _G.__covhit(2); controlIndex = controlIndex - 1
+end]])
+	expect(added).toBe(2)
+end)

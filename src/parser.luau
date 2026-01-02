@@ -1227,6 +1227,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 	local functionDeclarationLines = {}
 	local branchInstrumentedLines = {}
 	local branchAdded = 0
+	local linesInCondition = {}
 
 	-- Track loop headers whose 'do' is on a separate line so we can avoid double-instrumenting the block start
 	local loopDoLines = {}
@@ -1248,6 +1249,9 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 						elseif t.value == "do" and nestedFunctionDepth == 0 then
 							if t.line ~= token.line then
 								loopDoLines[t.line] = true
+								for lineNum = token.line + 1, t.line do
+									linesInCondition[lineNum] = true
+								end
 							end
 							break
 						end
@@ -1257,9 +1261,6 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 			end
 		end
 	end
-
-	-- Track which lines are inside if/elseif conditions (between if/elseif keyword and then keyword)
-	local linesInCondition = {}
 
 	-- First pass: detect and instrument functions
 	for idx, token in ipairs(tokens) do
