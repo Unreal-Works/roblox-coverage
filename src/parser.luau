@@ -1,5 +1,5 @@
 local computeModulePath = require("./computeModulePath")
-local normalizeNewlines = require("./string/normalizeNewLines")
+local normalizeNewlines = require("./string/normalizeNewlines")
 local tryScanLong = require("./string/tryScanLong")
 local splitSourceByNewlines = require("./string/splitSourceByNewlines")
 local parser = {}
