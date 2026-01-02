@@ -943,3 +943,27 @@ do
 end]])
 	expect(added).toBe(2)
 end)
+
+describe("regression: instrumentSource ReactComponentStackFrame.describeNativeComponentFrame while sample", function()
+	local coverage = ensureCoverage()
+	local source = [=[table.insert(
+    self.lines,
+    if #self.line ~= 1
+        then Diff.new(self.op, concatenateRelevantDiffs(self.op, self.line, self.changeColor))
+        else if self.line[1][1] == self.op
+            then self.line[1] -- can use instance
+            else Diff.new(self.op, self.line[1][2]) -- was common diff
+)]=]
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe([[_G.__covhit(1); table.insert(
+    self.lines,
+    if #self.line ~= 1
+        then _G.__covbranch(1, 0)(Diff.new(self.op, concatenateRelevantDiffs(self.op, self.line, self.changeColor)))
+        else _G.__covbranch(1, 1)(if self.line[1][1] == self.op
+            then _G.__covbranch(2, 0)(self.line[1]) -- can use instance
+            else _G.__covbranch(2, 1)(Diff.new(self.op, self.line[1][2]))) -- was common diff
+)]])
+	expect(added).toBe(5)
+end)
+
+

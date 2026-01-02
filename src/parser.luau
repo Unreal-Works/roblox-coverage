@@ -874,6 +874,28 @@ replaceTernaryExpression = function(
 		end
 
 		-- Build the instrumented nested expression
+		local commentStartInThen = nestedInstrumentedThen:find("\n%s*%-%-") or nestedInstrumentedThen:find("%-%-")
+		if commentStartInThen then
+			local commentText = nestedInstrumentedThen:sub(commentStartInThen)
+			if not commentText:match("^%s") then
+				commentText = " " .. commentText
+			end
+			nestedSuffixThen = commentText .. nestedSuffixThen
+			nestedInstrumentedThen = (nestedInstrumentedThen:sub(1, commentStartInThen - 1):match("^(.-)%s*$"))
+				or nestedInstrumentedThen:sub(1, commentStartInThen - 1)
+		end
+
+		local commentStartInElse = nestedInstrumentedElse:find("\n%s*%-%-") or nestedInstrumentedElse:find("%-%-")
+		if commentStartInElse then
+			local commentText = nestedInstrumentedElse:sub(commentStartInElse)
+			if not commentText:match("^%s") then
+				commentText = " " .. commentText
+			end
+			nestedSuffixElse = commentText .. nestedSuffixElse
+			nestedInstrumentedElse = (nestedInstrumentedElse:sub(1, commentStartInElse - 1):match("^(.-)%s*$"))
+				or nestedInstrumentedElse:sub(1, commentStartInElse - 1)
+		end
+
 		local nestedInstrumented = string.format(
 			"%s%s%s_G.__covbranch(%d, 0)(%s)%s%s%s_G.__covbranch(%d, 1)(%s)%s",
 			nestedBeforeThen,
@@ -944,12 +966,16 @@ replaceTernaryExpression = function(
 		end
 	end
 
-	-- Move trailing comment lines (between then and else) outside the branch wrapper
-	local commentStartInThen = instrumentedThen:find("\n%s*%-%-")
+	-- Move trailing comment (inline or on following lines) outside the branch wrapper
+	local commentStartInThen = instrumentedThen:find("\n%s*%-%-") or instrumentedThen:find("%-%-")
 	if commentStartInThen then
-		suffixThen = instrumentedThen:sub(commentStartInThen) .. suffixThen
+		local commentText = instrumentedThen:sub(commentStartInThen)
+		if not commentText:match("^%s") then
+			commentText = " " .. commentText
+		end
+		suffixThen = commentText .. suffixThen
 		instrumentedThen = (instrumentedThen:sub(1, commentStartInThen - 1):match("^(.-)%s*$"))
-			or instrumentedThen
+			or instrumentedThen:sub(1, commentStartInThen - 1)
 	end
 
 	-- Process the else branch, checking for nested ternaries
