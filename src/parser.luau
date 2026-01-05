@@ -325,7 +325,6 @@ replaceTernaryExpression = function(
 	local text = ""
 	for i = startLine, math.min(endLine, #lines) do
 		if i > startLine then
-
 			text = text .. "\n"
 		end
 		text = text .. lines[i]
@@ -363,11 +362,38 @@ replaceTernaryExpression = function(
 	local elseMatchEnd = elsePos + #tokens[branchData.elseIdx].value
 	local elseKeyword = text:sub(elsePos + 1, elseMatchEnd)
 
-	local endPos = getTokenOffset(branchData.endTokenIdx)
+	local adjustedEndIdx = branchData.endTokenIdx
+
+	-- If a ternary expression is followed by a comma at depth 0 (e.g., argument lists),
+	-- clamp the end to the token before that comma to avoid swallowing siblings.
+	if branchData.isTernary then
+		local depth = 0
+		for idx = branchData.elseIdx + 1, branchData.endTokenIdx do
+			local tk = tokens[idx]
+			if tk.kind == "symbol" then
+				if tk.value == "(" or tk.value == "[" or tk.value == "{" then
+					depth += 1
+				elseif tk.value == ")" or tk.value == "]" or tk.value == "}" then
+					if depth > 0 then
+						depth -= 1
+					end
+				elseif tk.value == "," and depth == 0 then
+					adjustedEndIdx = idx - 1
+					break
+				end
+			end
+		end
+
+		if adjustedEndIdx < branchData.elseIdx then
+			adjustedEndIdx = branchData.endTokenIdx
+		end
+	end
+
+	local endPos = getTokenOffset(adjustedEndIdx)
 	if not endPos then
 		return lines[startLine], 1, 0
 	end
-	local elseExprEnd = endPos + #tokens[branchData.endTokenIdx].value
+	local elseExprEnd = endPos + #tokens[adjustedEndIdx].value
 
 	-- Detect ternary expressions with elseif branches (3+ paths)
 	local elseifTokens = {}
@@ -952,7 +978,7 @@ replaceTernaryExpression = function(
 								and innerIfToken.line >= thenToken.line
 								and innerIfPos < elsePos
 								and innerBranchData.endLine <= elseTokenLine
-							and innerEndPos
+								and innerEndPos
 							then
 								local innerInstrumented, _, _, innerAdded =
 									instrumentNestedTernary(info.branchId, innerBranchData)
@@ -967,8 +993,8 @@ replaceTernaryExpression = function(
 								end
 							end
 						end
+					end
 				end
-		end
 			end
 		end
 	end
@@ -1261,6 +1287,24 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 	local branchInstrumentedLines = {}
 	local branchAdded = 0
 	local linesInCondition = {}
+
+	local function branchCountFor(branchId, branchData)
+		local bd = branchData or coverage.branchMap[branchId]
+		if not bd or not bd.locations then
+			return 1
+		end
+		if bd.isTernary and linesInCondition[bd.line] then
+			return 1
+		end
+		return #bd.locations
+	end
+
+	local function addBranch(branchId, count)
+		if not branchId then
+			return
+		end
+		branchAdded += count or 1
+	end
 
 	-- Track loop headers whose 'do' is on a separate line so we can avoid double-instrumenting the block start
 	local loopDoLines = {}
@@ -1567,31 +1611,114 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 	end
 
 	-- Second pass: detect if/elseif/else branches and mark condition lines
+	local delayedBranches = {}
+
+	local function registerBranch(
+		branchId,
+		branchLines,
+		branchLocations,
+		isTernary,
+		endLine,
+		ifTokenIdx,
+		thenTokenIdx,
+		elseIdx,
+		endTokenIdx,
+		tokenLine
+	)
+		if isTernary then
+			branchLines = { { line = tokenLine, pathIndex = 0 }, { line = tokenLine, pathIndex = 1 } }
+		end
+
+		coverage.branchMap[branchId] = {
+			type = "if",
+			line = tokenLine,
+			file = filePath,
+			locations = branchLocations,
+			isTernary = isTernary,
+			endLine = endLine,
+			ifTokenIdx = ifTokenIdx,
+			thenTokenIdx = thenTokenIdx,
+			elseIdx = elseIdx,
+			endTokenIdx = endTokenIdx,
+		}
+
+		for _, branchInfo in ipairs(branchLines) do
+			if not branchInstrumentedLines[branchInfo.line] then
+				branchInstrumentedLines[branchInfo.line] = {}
+			end
+			table.insert(
+				branchInstrumentedLines[branchInfo.line],
+				{ branchId = branchId, pathIndex = branchInfo.pathIndex, isTernary = isTernary }
+			)
+		end
+	end
+
 	local i = 1
 	while i <= #tokens do
 		local token = tokens[i]
 		if token.kind == "keyword" and token.value == "if" then
 			-- Found an if statement, track all branches
-			local branchId = coverage.nextBranchId
-			coverage.nextBranchId += 1
-
 			local branchLocations = {}
 			local branchLines = {}
 
 			-- Find the 'then' for the if branch
 			local thenIdx = nil
+			local parenDepth = 0
+			local braceDepth = 0
+			local bracketDepth = 0
+			local conditionHasInlineIf = false
+			local conditionInlineIfDepth = 0
 			for j = i + 1, #tokens do
-				if tokens[j].kind == "keyword" and tokens[j].value == "then" then
-					thenIdx = j
-					break
+				local tk = tokens[j]
+				if tk.kind == "symbol" then
+					if tk.value == "(" then
+						parenDepth += 1
+					elseif tk.value == ")" then
+						if parenDepth > 0 then
+							parenDepth -= 1
+						end
+					elseif tk.value == "{" then
+						braceDepth += 1
+					elseif tk.value == "}" then
+						if braceDepth > 0 then
+							braceDepth -= 1
+						end
+					elseif tk.value == "[" then
+						bracketDepth += 1
+					elseif tk.value == "]" then
+						if bracketDepth > 0 then
+							bracketDepth -= 1
+						end
+					end
+				end
+				if tk.kind == "keyword" then
+					if tk.value == "if" then
+						conditionHasInlineIf = true
+						conditionInlineIfDepth += 1
+					elseif tk.value == "else" and conditionInlineIfDepth > 0 then
+						conditionInlineIfDepth -= 1
+					elseif tk.value == "elseif" then
+						conditionHasInlineIf = true
+					end
+				end
+
+				if tk.kind == "keyword" and tk.value == "then" then
+					if parenDepth == 0 and braceDepth == 0 and bracketDepth == 0 then
+						if conditionInlineIfDepth > 0 then
+							conditionInlineIfDepth -= 1
+							continue
+						end
+						thenIdx = j
+						break
+					end
 				end
 			end
 
 			-- Detect if this is an if expression based on context
 			local firstOnLine = firstTokens[token.line]
-				local isTernary = (firstOnLine ~= token)
-				local thenInline = false
-				local elseInline = false
+			local isTernary = (firstOnLine ~= token)
+			local thenInline = false
+			local elseInline = false
 			if not isTernary and i > 1 then
 				local prev = tokens[i - 1]
 				if
@@ -1602,20 +1729,20 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 				end
 			end
 
-				-- Heuristic: if there is content on the same line after 'then' (or later after 'else'),
-				-- treat this as an expression-style if (ternary) because the branch starts inline.
-				if thenIdx then
-					local k = thenIdx + 1
-					while k <= #tokens and tokens[k].line == tokens[thenIdx].line do
-						local tk = tokens[k]
-						if tk.kind ~= "comment" then
-							isTernary = true
-							thenInline = true
-							break
-						end
-						k += 1
+			-- Heuristic: if there is content on the same line after 'then' (or later after 'else'),
+			-- treat this as an expression-style if (ternary) because the branch starts inline.
+			if thenIdx then
+				local k = thenIdx + 1
+				while k <= #tokens and tokens[k].line == tokens[thenIdx].line do
+					local tk = tokens[k]
+					if tk.kind ~= "comment" then
+						isTernary = true
+						thenInline = true
+						break
 					end
+					k += 1
 				end
+			end
 
 			if thenIdx then
 				-- Mark all lines between 'if' and 'then' as being in a condition
@@ -1661,6 +1788,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 				local inlineIfDepth = 0
 				local j = thenIdx + 1
 				local foundElse = false
+				local hasElseLike = false
 
 				local elseIdx = nil
 				local endTokenIdx = nil
@@ -1682,6 +1810,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 							if
 								t.value == "local"
 								or t.value == "return"
+								or t.value == "then"
 								or t.value == "end"
 								or t.value == "do"
 								or t.value == "for"
@@ -1834,6 +1963,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 						elseif depth == 1 and t.value == "elseif" then
 							-- Find the 'then' after elseif
 							local elseifThenIdx = nil
+							hasElseLike = true
 
 							-- Inline content after 'else' means expression-style if
 							local m = j + 1
@@ -1891,6 +2021,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 							inlineIfDepth -= 1
 						elseif depth == 1 and t.value == "else" then
 							foundElse = true
+							hasElseLike = true
 							elseIdx = j
 
 							-- Inline content after 'else' means expression-style if
@@ -1946,7 +2077,10 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 				if depth == 0 then
 					local closingToken = tokens[endTokenIdx]
 					if closingToken and closingToken.kind == "keyword" then
-						if (closingToken.value == "end" or closingToken.value == "until") and not (thenInline or elseInline) then
+						if
+							(closingToken.value == "end" or closingToken.value == "until")
+							and not (thenInline or elseInline)
+						then
 							isTernary = false
 						end
 					end
@@ -1965,38 +2099,47 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 
 				-- Register branch if we found at least 2 paths
 				if #branchLocations >= 2 then
-					coverage.branchMap[branchId] = {
-						type = "if",
-						line = token.line,
-						file = filePath,
-						locations = branchLocations,
-						isTernary = isTernary,
-						endLine = tokens[j - 1].line,
-						ifTokenIdx = i,
-						thenTokenIdx = thenIdx,
-						elseIdx = elseIdx,
-						endTokenIdx = j - 1,
-					}
+					local endLine = tokens[j - 1].line
+					local endIdx = j - 1
 
-					-- For ternary expressions, mark the 'if' line for both branches
-					if isTernary then
-						branchLines = { { line = token.line, pathIndex = 0 }, { line = token.line, pathIndex = 1 } }
-					end
-
-					-- Mark lines for branch instrumentation
-					for _, branchInfo in ipairs(branchLines) do
-						if not branchInstrumentedLines[branchInfo.line] then
-							branchInstrumentedLines[branchInfo.line] = {}
-						end
-						table.insert(
-							branchInstrumentedLines[branchInfo.line],
-							{ branchId = branchId, pathIndex = branchInfo.pathIndex, isTernary = isTernary }
-						)
+					if not isTernary and conditionHasInlineIf then
+						table.insert(delayedBranches, {
+							branchLines = branchLines,
+							branchLocations = branchLocations,
+							isTernary = isTernary,
+							endLine = endLine,
+							ifTokenIdx = i,
+							thenTokenIdx = thenIdx,
+							elseIdx = elseIdx,
+							endTokenIdx = endIdx,
+							tokenLine = token.line,
+						})
+					else
+						local branchId = coverage.nextBranchId
+						coverage.nextBranchId += 1
+						registerBranch(branchId, branchLines, branchLocations, isTernary, endLine, i, thenIdx, elseIdx, endIdx, token.line)
 					end
 				end
 			end
 		end
 		i += 1
+	end
+
+	for _, pending in ipairs(delayedBranches) do
+		local branchId = coverage.nextBranchId
+		coverage.nextBranchId += 1
+		registerBranch(
+			branchId,
+			pending.branchLines,
+			pending.branchLocations,
+			pending.isTernary,
+			pending.endLine,
+			pending.ifTokenIdx,
+			pending.thenTokenIdx,
+			pending.elseIdx,
+			pending.endTokenIdx,
+			pending.tokenLine
+		)
 	end
 
 	-- Pass 2.8: Allocate Hit IDs in order
@@ -2290,7 +2433,8 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 
 					for _, rep in ipairs(filteredReps) do
 						blockText = blockText:sub(1, rep.startPos - 1) .. rep.text .. blockText:sub(rep.endPos + 1)
-						branchAdded += #rep.branchData.locations + (rep.internalAdded or 0)
+						addBranch(rep.branchId, branchCountFor(rep.branchId, rep.branchData))
+						branchAdded += (rep.internalAdded or 0)
 					end
 
 					text = blockText
@@ -2317,7 +2461,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 									.. tostring(bInfo.pathIndex)
 									.. ");"
 							)
-							branchAdded += 1
+							addBranch(bInfo.branchId)
 						end
 					end
 				else
@@ -2326,7 +2470,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 							modifications,
 							"_G.__covbranch(" .. tostring(bInfo.branchId) .. ", " .. tostring(bInfo.pathIndex) .. ");"
 						)
-						branchAdded += 1
+						addBranch(bInfo.branchId)
 					end
 				end
 			else
@@ -2356,8 +2500,8 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 				if newText ~= lines[lineNo] then
 					text = newText
 					linesToSkip = consumed - 1
-					local branchCount = #branchData.locations
-					branchAdded += branchCount + (internalAdded or 0)
+					addBranch(branchId, branchCountFor(branchId, branchData))
+					branchAdded += (internalAdded or 0)
 					lineInsertions = {}
 
 					if branchInstrumentedLines[lineNo] then
@@ -2380,8 +2524,8 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 									.. ", "
 									.. tostring(bInfo.pathIndex)
 									.. ");"
-						)
-						branchAdded += 1
+							)
+							addBranch(bInfo.branchId)
 						end
 					end
 				else
@@ -2390,7 +2534,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 							modifications,
 							"_G.__covbranch(" .. tostring(bInfo.branchId) .. ", " .. tostring(bInfo.pathIndex) .. ");"
 						)
-						branchAdded += 1
+						addBranch(bInfo.branchId)
 					end
 				end
 			end
@@ -2402,7 +2546,7 @@ function parser.instrumentSource(source: string, filePath: string, coverage)
 						modifications,
 						"_G.__covbranch(" .. tostring(bInfo.branchId) .. ", " .. tostring(bInfo.pathIndex) .. ");"
 					)
-					branchAdded += 1
+					addBranch(bInfo.branchId)
 				end
 			end
 		end

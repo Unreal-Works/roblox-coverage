@@ -1020,3 +1020,29 @@ Scales with Power, maxing out at %cap%. Also provides a flat %flat% boost.`
 	expect(added).toBe(3)
 end)
 
+describe("regression: instrumentSource if ternary in function", function()
+	local coverage = ensureCoverage()
+	local source = [[if pointInTriangle(if hy < my then hx else qx, hy, mx, my, if hy < my then qx else hx, hy, p.x, p.y) then
+    print("inside triangle")
+end]]
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe([[if pointInTriangle(if hy < my then _G.__covbranch(1, 0)(hx) else _G.__covbranch(1, 1)(qx), hy, mx, my, if hy < my then _G.__covbranch(2, 0)(qx) else _G.__covbranch(2, 1)(hx), hy, p.x, p.y) then
+    _G.__covbranch(3, 0); _G.__covhit(1); print("inside triangle")
+end]])
+	expect(added).toBe(6)
+end)
+
+describe("regression: instrumentSource ternary in if", function()
+	local coverage = ensureCoverage()
+	local source = [[if if invSize ~= nil and invSize > 0 then isEarHashed(ear, minX, minY, invSize) else isEar(ear) then
+    print("ear found")
+end]]
+	local instrumented, added = parser.instrumentSource(source, "test.lua", coverage)
+	expect(instrumented).toBe([[if if invSize ~= nil and invSize > 0 then _G.__covbranch(1, 0)(isEarHashed(ear, minX, minY, invSize)) else _G.__covbranch(1, 1)(isEar(ear)) then
+    _G.__covbranch(2, 0); _G.__covhit(1); print("ear found")
+end]])
+	expect(added).toBe(4)
+end)
+
+
+
